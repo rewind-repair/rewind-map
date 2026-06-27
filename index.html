@@ -5,100 +5,171 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rewind Repair — Active Pins</title>
 <style>
+  :root {
+    --bg:       #0f0f14;
+    --card:     #15151f;
+    --header:   #1a1a2e;
+    --border:   #2a2a40;
+    --border2:  #1e1e2e;
+    --text:     #fff;
+    --subtext:  #888;
+    --dimtext:  #555;
+    --filterBg: #1a1a2e;
+    --mapBg:    #1a1a2e;
+  }
+  body.light {
+    --bg:       #f0f0eb;
+    --card:     #fafaf8;
+    --header:   #ffffff;
+    --border:   #d8d8d0;
+    --border2:  #e8e8e2;
+    --text:     #1a1a1a;
+    --subtext:  #666;
+    --dimtext:  #aaa;
+    --filterBg: #ffffff;
+    --mapBg:    #e8e8e0;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #0f0f14; color: #fff; height: 100dvh; display: flex; flex-direction: column; }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100dvh; display: flex; flex-direction: column; transition: background .2s, color .2s; }
+
+  /* ── Login overlay ── */
+  #login-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: #0f0f14; display: flex; align-items: center; justify-content: center;
+  }
+  #login-box {
+    background: #1a1a2e; border: 2px solid #4a90d9; border-radius: 14px;
+    padding: 32px 36px; width: 300px; text-align: center; font-family: system-ui, sans-serif;
+  }
+  #login-box h2 { font-size: 16px; color: #fff; margin-bottom: 6px; }
+  #login-box p  { font-size: 12px; color: #888; margin-bottom: 20px; }
+  #login-pin    { width: 100%; padding: 10px; font-size: 18px; letter-spacing: .3em;
+                  text-align: center; background: #111; color: #fff; border: 1px solid #444;
+                  border-radius: 8px; margin-bottom: 12px; outline: none; }
+  #login-btn    { width: 100%; padding: 10px; background: #4a90d9; color: #fff; border: none;
+                  border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
+  #login-err    { color: #f99; font-size: 12px; margin-top: 8px; min-height: 16px; }
 
   /* ── Header ── */
   .header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 16px; background: #1a1a2e; border-bottom: 1px solid #2a2a40;
+    padding: 10px 16px; background: var(--header); border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-  .header h1 { font-size: 14px; font-weight: 700; color: #fff; letter-spacing: .02em; }
-  .header .sub { font-size: 11px; color: #888; margin-top: 2px; }
+  .header-left  { display: flex; flex-direction: column; }
+  .header h1    { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+  .header-user  { font-size: 11px; color: var(--subtext); margin-top: 2px; }
+  .header-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .legend { display: flex; gap: 14px; align-items: center; }
-  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #aaa; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--subtext); }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .dot-wo  { background: #4a9d6f; }
   .dot-fdx { background: #e8a020; }
+  .dot-done { background: #555; }
   .btn-refresh {
-    background: #2a2a40; border: 1px solid #444; color: #aaa;
-    padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    transition: background .15s;
+    background: var(--filterBg); border: 1px solid var(--border); color: var(--subtext);
+    padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: background .15s;
   }
-  .btn-refresh:hover { background: #3a3a58; color: #fff; }
+  .btn-refresh:hover { background: var(--border); color: var(--text); }
 
   /* ── Filter bar ── */
   .filters {
     display: flex; gap: 8px; padding: 8px 16px;
-    background: #15151f; border-bottom: 1px solid #2a2a40; flex-shrink: 0; flex-wrap: wrap;
+    background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
   }
   .filter-btn {
     padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
-    border: 1px solid #333; background: #1a1a2e; color: #888; cursor: pointer;
-    transition: all .15s;
+    border: 1px solid var(--border); background: var(--filterBg); color: var(--subtext); cursor: pointer; transition: all .15s;
   }
-  .filter-btn.active { background: #2a3a2a; border-color: #4a9d6f; color: #4a9d6f; }
-  .filter-btn.active.fdx { background: #3a2a10; border-color: #e8a020; color: #e8a020; }
-  .filter-btn.active.andrei { background: #1a2a3a; border-color: #6a9fd8; color: #6a9fd8; }
-  .filter-btn.active.jiho { background: #2a1a3a; border-color: #b08ad8; color: #b08ad8; }
+  .filter-btn.active         { background: #2a3a2a; border-color: #4a9d6f; color: #4a9d6f; }
+  .filter-btn.active.fdx     { background: #3a2a10; border-color: #e8a020; color: #e8a020; }
+  .filter-btn.active.andrei  { background: #1a2a3a; border-color: #6a9fd8; color: #6a9fd8; }
+  .filter-btn.active.jiho    { background: #2a1a3a; border-color: #b08ad8; color: #b08ad8; }
+  .filter-btn.active.done    { background: #2a2a2a; border-color: #777; color: #aaa; }
 
   /* ── Main layout ── */
   .main { display: flex; flex: 1; overflow: hidden; }
-  #map { flex: 1; }
+  #map  { flex: 1; }
 
   /* ── Sidebar ── */
   .sidebar {
-    width: 300px; flex-shrink: 0; background: #15151f;
-    border-left: 1px solid #2a2a40; overflow-y: auto; display: flex; flex-direction: column;
+    width: 300px; flex-shrink: 0; background: var(--card);
+    border-left: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column;
   }
   .sidebar-header {
     padding: 10px 14px; font-size: 11px; font-weight: 700;
-    color: #666; text-transform: uppercase; letter-spacing: .08em;
-    border-bottom: 1px solid #2a2a40; flex-shrink: 0;
+    color: var(--dimtext); text-transform: uppercase; letter-spacing: .08em;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
   .pin-card {
-    padding: 12px 14px; border-bottom: 1px solid #1e1e2e; cursor: pointer;
-    transition: background .1s;
+    padding: 12px 14px; border-bottom: 1px solid var(--border2); cursor: pointer; transition: background .1s;
   }
-  .pin-card:hover { background: #1e1e30; }
-  .pin-card.selected { background: #1e2a1e; border-left: 3px solid #4a9d6f; }
+  .pin-card:hover { background: var(--border2); }
+  .pin-card.selected     { background: #1e2a1e; border-left: 3px solid #4a9d6f; }
   .pin-card.selected.fdx { background: #2a1e0e; border-left-color: #e8a020; }
-  .pin-type {
-    display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .08em;
-    text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-bottom: 5px;
-  }
-  .pin-type.wo  { background: #1a3a2a; color: #4a9d6f; }
-  .pin-type.fdx { background: #3a2a10; color: #e8a020; }
-  .pin-tech {
-    display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .06em;
-    text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-left: 4px; margin-bottom: 5px;
-  }
+  .pin-card.selected.done { background: #222; border-left-color: #777; }
+  .pin-type { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-bottom: 5px; }
+  .pin-type.wo   { background: #1a3a2a; color: #4a9d6f; }
+  .pin-type.fdx  { background: #3a2a10; color: #e8a020; }
+  .pin-type.done { background: #2a2a2a; color: #777; }
+  .pin-tech { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-left: 4px; margin-bottom: 5px; }
   .pin-tech.andrei { background: #1a2a3a; color: #6a9fd8; }
   .pin-tech.jiho   { background: #2a1a3a; color: #b08ad8; }
-  .pin-address { font-size: 12px; font-weight: 600; color: #ddd; line-height: 1.3; margin-bottom: 4px; }
-  .pin-note { font-size: 11px; color: #888; line-height: 1.4; white-space: pre-wrap; }
-  .pin-cni { font-size: 10px; color: #555; margin-top: 4px; }
-  .pin-date { font-size: 10px; color: #444; margin-top: 2px; }
-
-  .empty-state {
-    padding: 32px 16px; text-align: center; color: #444; font-size: 12px; line-height: 1.6;
+  .pin-address { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.3; margin-bottom: 4px; }
+  .pin-note    { font-size: 11px; color: var(--subtext); line-height: 1.4; white-space: pre-wrap; }
+  .pin-cni     { font-size: 10px; color: var(--dimtext); margin-top: 4px; }
+  .pin-date    { font-size: 10px; color: var(--dimtext); margin-top: 2px; }
+  .btn-complete {
+    margin-top: 8px; padding: 3px 10px; font-size: 10px; font-weight: 700;
+    border-radius: 4px; border: 1px solid #4a9d6f; background: transparent;
+    color: #4a9d6f; cursor: pointer; transition: background .15s;
   }
-  .loading {
-    padding: 32px 16px; text-align: center; color: #555; font-size: 12px;
-  }
+  .btn-complete:hover { background: #1a3a2a; }
+  .btn-complete.done-btn { border-color: #777; color: #777; }
+  .btn-complete.done-btn:hover { background: #2a2a2a; }
 
-  /* ── Mobile: sidebar below map ── */
+  .empty-state { padding: 32px 16px; text-align: center; color: var(--dimtext); font-size: 12px; line-height: 1.6; }
+  .loading     { padding: 32px 16px; text-align: center; color: var(--dimtext); font-size: 12px; }
+
   @media (max-width: 640px) {
     .main { flex-direction: column; }
-    .sidebar { width: 100%; height: 240px; border-left: none; border-top: 1px solid #2a2a40; }
+    .sidebar { width: 100%; height: 240px; border-left: none; border-top: 1px solid var(--border); }
     #map { flex: 1; min-height: 0; }
   }
 </style>
 </head>
 <body>
 
+<!-- Login overlay -->
+<div id="login-overlay">
+  <div id="login-box">
+    <h2>Rewind Repair</h2>
+    <p>Enter your PIN to continue</p>
+    <input type="password" id="login-pin" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
+    <button id="login-btn" onclick="doLogin()">Sign In</button>
+    <div id="login-err"></div>
+  </div>
+</div>
+
 <div class="header">
+  <div class="header-left">
+    <div class="header h1">Rewind Repair — Active Pins</div>
+    <div class="header-user" id="user-label">Not signed in</div>
+    <div class="sub" id="last-updated">Loading…</div>
+  </div>
+  <div class="header-right">
+    <div class="legend">
+      <div class="legend-item"><div class="dot dot-wo"></div>Workorder</div>
+      <div class="legend-item"><div class="dot dot-fdx"></div>FedEx</div>
+      <div class="legend-item"><div class="dot dot-done"></div>Completed</div>
+    </div>
+    <button class="btn-refresh" onclick="toggleTheme()" id="btn-theme">☀ Light</button>
+    <button class="btn-refresh" onclick="loadPins()">↺ Refresh</button>
+    <button class="btn-refresh" id="btn-track" onclick="checkAllTracking()" style="background:#3a2a10;border-color:#e8a020;color:#e8a020;">📦 Check Status</button>
+    <button class="btn-refresh" onclick="doLogout()" style="border-color:#c62828;color:#c62828;">Sign Out</button>
+  </div>
   <div>
     <div class="header h1">Rewind Repair — Active Pins</div>
     <div class="sub" id="last-updated">Loading…</div>
@@ -113,12 +184,13 @@
   </div>
 </div>
 
-<div class="filters">
-  <button class="filter-btn active" id="f-all"     onclick="setFilter('all')">All</button>
-  <button class="filter-btn"        id="f-wo"      onclick="setFilter('wo')">Workorders</button>
-  <button class="filter-btn fdx"    id="f-fdx"     onclick="setFilter('fdx')">FedEx</button>
-  <button class="filter-btn andrei" id="f-andrei"  onclick="setFilter('andrei')">Andrei</button>
-  <button class="filter-btn jiho"   id="f-jiho"    onclick="setFilter('jiho')">Jiho</button>
+<div class="filters" id="filter-bar">
+  <button class="filter-btn active" id="f-all"    onclick="setFilter('all')">All</button>
+  <button class="filter-btn"        id="f-wo"     onclick="setFilter('wo')">Workorders</button>
+  <button class="filter-btn fdx"    id="f-fdx"    onclick="setFilter('fdx')">FedEx</button>
+  <button class="filter-btn andrei" id="f-andrei" onclick="setFilter('andrei')">Andrei</button>
+  <button class="filter-btn jiho"   id="f-jiho"   onclick="setFilter('jiho')">Jiho</button>
+  <button class="filter-btn done"   id="f-done"   onclick="setFilter('done')">Completed</button>
 </div>
 
 <div class="main">
@@ -130,102 +202,203 @@
 </div>
 
 <script>
-  const SHEET_ID   = '123m2F6uAQ2xWXQLrP-KKiU7LFyS-_5IeanWi9aRYSlA';
-  const TAB_NAME   = 'Active Pins';
-  const MAPS_KEY   = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg'; // HTTP referrer restricted — Maps JS only
-  const SHEETS_KEY = 'AIzaSyCTvNZrwA_E8uG3nUsM8ihdYMFBwsUm27k';  // No referrer restriction — Sheets API only
-  const SHEET_URL  = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(TAB_NAME)}?key=${SHEETS_KEY}`;
+  // ── Config ──────────────────────────────────────────────────────────────
+  const SHEET_ID    = '123m2F6uAQ2xWXQLrP-KKiU7LFyS-_5IeanWi9aRYSlA';
+  const PINS_TAB    = 'Active Pins';
+  const DONE_TAB    = 'Completed Pins';
+  const SHEETS_KEY  = 'AIzaSyCTvNZrwA_E8uG3nUsM8ihdYMFBwsUm27k';
   const FEDEX_PROXY = 'https://script.google.com/macros/s/AKfycbxcD9yShG29_7OeFGNLLwA1psBZfXLfLiqMxmefplevhd5go0m-fBL81UhixbFTRmo/exec';
 
-  // Colors
+  const PINS = {
+    andrei: { pin: '3784', label: 'Andrei', admin: false },
+    jiho:   { pin: '6767', label: 'Jiho',   admin: true  },
+  };
+
+  // ── Auth state ────────────────────────────────────────────────────────────
+  let currentUser = null; // 'andrei' | 'jiho'
+  let isAdmin     = false;
+
+  function doLogin() {
+    const entered = document.getElementById('login-pin').value.trim();
+    const match   = Object.entries(PINS).find(([, v]) => v.pin === entered);
+    if (!match) {
+      document.getElementById('login-err').textContent = 'Incorrect PIN';
+      document.getElementById('login-pin').value = '';
+      return;
+    }
+    currentUser = match[0];
+    isAdmin     = match[1].admin;
+    sessionStorage.setItem('rw_user', currentUser);
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('user-label').textContent = match[1].label + (isAdmin ? ' · Admin' : '');
+
+    // Hide tech filter buttons if not admin
+    if (!isAdmin) {
+      document.getElementById('f-andrei').style.display = 'none';
+      document.getElementById('f-jiho').style.display   = 'none';
+    }
+    loadPins();
+    startGPS();
+  }
+
+  function doLogout() {
+    sessionStorage.removeItem('rw_user');
+    currentUser = null; isAdmin = false;
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('login-pin').value = '';
+    document.getElementById('login-err').textContent = '';
+    stopGPS();
+  }
+
+  // Restore session on reload
+  window.addEventListener('load', () => {
+    document.getElementById('login-pin').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+    const saved = sessionStorage.getItem('rw_user');
+    if (saved && PINS[saved]) {
+      document.getElementById('login-pin').value = PINS[saved].pin;
+      doLogin();
+    }
+  });
+
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  let darkMode = true;
+  function toggleTheme() {
+    darkMode = !darkMode;
+    document.body.classList.toggle('light', !darkMode);
+    document.getElementById('btn-theme').textContent = darkMode ? '☀ Light' : '🌙 Dark';
+    if (map) map.setOptions({ styles: darkMode ? darkMapStyles() : [] });
+  }
+
+  // ── Map + state ───────────────────────────────────────────────────────────
   const COLORS = {
-    wo:  { fill: '#4a9d6f', stroke: '#2a6a4a' },
-    fdx: { fill: '#e8a020', stroke: '#b06010' },
+    wo:   { fill: '#4a9d6f', stroke: '#2a6a4a' },
+    fdx:  { fill: '#e8a020', stroke: '#b06010' },
+    done: { fill: '#555555', stroke: '#333333' },
   };
   const TECH_COLORS = { andrei: '#6a9fd8', jiho: '#b08ad8' };
 
   let map, allPins = [], markers = [], infoWindows = [], activeFilter = 'all', selectedIdx = null;
   let fedexStatuses = {};
+  let gpsMarker = null, gpsWatchId = null;
 
-  // ── Map init (called by Maps JS API callback) ──────────────────────────
+  // ── Map init ──────────────────────────────────────────────────────────────
   window.initMap = function () {
     map = new google.maps.Map(document.getElementById('map'), {
-      center: { lat: 39.7392, lng: -104.9903 }, // Denver default
+      center: { lat: 39.7392, lng: -104.9903 },
       zoom: 10,
       mapTypeId: 'roadmap',
       styles: darkMapStyles(),
-      disableDefaultUI: false,
       zoomControl: true,
       streetViewControl: false,
       fullscreenControl: true,
     });
-    loadPins();
-    setInterval(loadPins, 60000); // auto-refresh every 60s
+    // Don't load pins here — wait for login
   };
 
-  // ── Load pins from sheet ───────────────────────────────────────────────
+  // ── Load pins from sheet ──────────────────────────────────────────────────
   async function loadPins() {
+    if (!currentUser) return;
     try {
-      const res  = await fetch(SHEET_URL);
-      const json = await res.json();
-      const rows = json.values ?? [];
+      const [activeRes, doneRes] = await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(PINS_TAB)}?key=${SHEETS_KEY}`),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(DONE_TAB)}?key=${SHEETS_KEY}`),
+      ]);
+      const activeJson = await activeRes.json();
+      const doneJson   = doneRes.ok ? await doneRes.json() : { values: [] };
 
-      // Skip header row; columns: Type | Tech | Address | Note | CNI | Lat | Lng | Date Added
-      allPins = rows.slice(1).map((r, i) => ({
-        idx:     i,
-        type:    (r[0] ?? '').toLowerCase().trim(),   // 'wo' or 'fdx'
-        tech:    (r[1] ?? '').toLowerCase().trim(),   // 'andrei' or 'jiho'
-        address: r[2] ?? '',
-        note:    r[3] ?? '',
-        cni:     r[4] ?? '',
-        lat:     parseFloat(r[5]) || null,
-        lng:     parseFloat(r[6]) || null,
-        date:    r[7] ?? '',
-        row:     i + 2, // 1-indexed sheet row (header = row 1)
-      })).filter(p => p.lat && p.lng);
+      const parseRows = (json, isDone) =>
+        (json.values ?? []).slice(1).map((r, i) => ({
+          idx:     (isDone ? 10000 : 0) + i,
+          type:    isDone ? 'done' : (r[0] ?? '').toLowerCase().trim(),
+          tech:    (r[1] ?? '').toLowerCase().trim(),
+          address: r[2] ?? '',
+          note:    r[3] ?? '',
+          cni:     r[4] ?? '',
+          lat:     parseFloat(r[5]) || null,
+          lng:     parseFloat(r[6]) || null,
+          date:    r[7] ?? '',
+          row:     i + 2,
+          isDone,
+        })).filter(p => p.lat && p.lng);
+
+      const active = parseRows(activeJson, false);
+      const done   = parseRows(doneJson,   true);
+      allPins = [...active, ...done];
 
       renderPins();
       document.getElementById('last-updated').textContent =
         'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
+    } catch(e) {
       console.error('[RW Map] Load error:', e);
       document.getElementById('last-updated').textContent = 'Error loading pins';
     }
   }
 
-  // ── Render markers + sidebar ───────────────────────────────────────────
+  // ── Filter logic ──────────────────────────────────────────────────────────
+  function matchesFilter(p) {
+    // Non-admin users only see their own pins
+    if (!isAdmin && p.tech !== currentUser) return false;
+    // Completed pins only show in 'done' filter, never in others
+    if (p.isDone && activeFilter !== 'done') return false;
+    if (!p.isDone && activeFilter === 'done') return false;
+    if (activeFilter === 'all')    return true;
+    if (activeFilter === 'wo')     return p.type === 'wo';
+    if (activeFilter === 'fdx')    return p.type === 'fdx';
+    if (activeFilter === 'andrei') return p.tech === 'andrei';
+    if (activeFilter === 'jiho')   return p.tech === 'jiho';
+    if (activeFilter === 'done')   return p.isDone;
+    return true;
+  }
+
+  function setFilter(f) {
+    activeFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById('f-' + f);
+    if (btn) btn.classList.add('active');
+    renderPins();
+  }
+
+  // ── Render markers + sidebar ──────────────────────────────────────────────
   function renderPins() {
-    // Clear existing
     markers.forEach(m => m.setMap(null));
     infoWindows.forEach(iw => iw.close());
     markers = []; infoWindows = [];
 
     const filtered = allPins.filter(matchesFilter);
-
-    // Sidebar
     const list = document.getElementById('pin-list');
+
     if (filtered.length === 0) {
       list.innerHTML = '<div class="empty-state">No pins match the current filter.</div>';
     } else {
-      list.innerHTML = filtered.map(p => `
-        <div class="pin-card ${selectedIdx === p.idx ? 'selected' : ''} ${p.type === 'fdx' ? 'fdx' : ''}"
-             id="card-${p.idx}" onclick="selectPin(${p.idx})">
-          <span class="pin-type ${p.type}">${p.type === 'fdx' ? 'FedEx' : 'Workorder'}</span>
-          <span class="pin-tech ${p.tech}">${p.tech === 'andrei' ? 'Andrei' : 'Jiho'}</span>
+      list.innerHTML = filtered.map(p => {
+        const typeLabel = p.isDone ? 'Completed' : p.type === 'fdx' ? 'FedEx' : 'Workorder';
+        const typeClass = p.isDone ? 'done' : p.type;
+        const canComplete = !p.isDone && (isAdmin || p.tech === currentUser);
+        return `<div class="pin-card ${selectedIdx === p.idx ? 'selected' : ''} ${typeClass}" id="card-${p.idx}" onclick="selectPin(${p.idx})">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
+            <div>
+              <span class="pin-type ${typeClass}">${typeLabel}</span>
+              <span class="pin-tech ${p.tech}">${p.tech === 'andrei' ? 'Andrei' : 'Jiho'}</span>
+            </div>
+            <a href="https://maps.google.com/maps?daddr=${encodeURIComponent(p.address)}" target="_blank" onclick="event.stopPropagation()" style="display:inline-block;padding:4px 8px;background:#4a9d6f;color:#fff;border-radius:5px;font-size:10px;font-weight:700;text-decoration:none;white-space:nowrap;flex-shrink:0;">▶ Navigate</a>
+          </div>
           <div class="pin-address">${esc(p.address)}</div>
           <div class="pin-note">${esc(p.note)}</div>
-          ${p.type === 'fdx' ? `<div id="fdx-status-${p.idx}" style="margin-top:5px;font-size:10px;font-family:Arial,sans-serif;"></div>` : ''}
+          ${p.type === 'fdx' || p.isDone ? `<div id="fdx-status-${p.idx}" style="margin-top:5px;font-size:10px;font-family:Arial,sans-serif;"></div>` : ''}
           ${p.cni ? `<div class="pin-cni">CNI ${esc(p.cni)}</div>` : ''}
           ${p.date ? `<div class="pin-date">${esc(p.date)}</div>` : ''}
-        </div>
-      `).join('');
+          ${canComplete ? `<button class="btn-complete" onclick="event.stopPropagation();markComplete(${p.idx})">✓ Mark Complete</button>` : ''}
+          ${p.isDone && isAdmin ? `<button class="btn-complete done-btn" onclick="event.stopPropagation();restorePin(${p.idx})">↩ Restore</button>` : ''}
+        </div>`;
+      }).join('');
     }
 
     // Markers
-    filtered.forEach(p => {
-      const color  = COLORS[p.type] ?? COLORS.wo;
+    filtered.forEach((p, fi) => {
+      const color = COLORS[p.isDone ? 'done' : p.type] ?? COLORS.wo;
       const tcolor = TECH_COLORS[p.tech] ?? '#aaa';
-
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
         map,
@@ -233,32 +406,27 @@
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           fillColor: color.fill,
-          fillOpacity: 1,
+          fillOpacity: p.isDone ? 0.4 : 1,
           strokeColor: color.stroke,
           strokeWeight: 2,
           scale: p.type === 'fdx' ? 8 : 10,
         },
-        zIndex: p.type === 'fdx' ? 1 : 2,
+        zIndex: p.isDone ? 0 : p.type === 'fdx' ? 1 : 2,
       });
 
       const iw = new google.maps.InfoWindow({
-        content: `
-          <div style="font-family:system-ui,sans-serif;font-size:12px;max-width:220px;line-height:1.5;">
-            <div style="font-weight:700;margin-bottom:4px;">${esc(p.address)}</div>
-            <div style="color:#555;white-space:pre-wrap;">${esc(p.note)}</div>
-            ${p.cni ? `<div style="color:#999;margin-top:4px;font-size:11px;">CNI ${esc(p.cni)}</div>` : ''}
-            <div style="margin-top:6px;">
-              <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;
-                background:${p.type==='fdx'?'#fff3e0':'#e8f5e9'};color:${color.fill};">
-                ${p.type === 'fdx' ? 'FedEx' : 'Workorder'}
-              </span>
-              <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;
-                background:#f0f0f8;color:${tcolor};margin-left:4px;">
-                ${p.tech === 'andrei' ? 'Andrei' : 'Jiho'}
-              </span>
+        content: `<div style="font-family:system-ui,sans-serif;font-size:12px;max-width:240px;line-height:1.5;">
+          <div style="font-weight:700;margin-bottom:6px;">${esc(p.address)}</div>
+          <div style="color:#333;white-space:pre-wrap;margin-bottom:8px;">${esc(p.note)}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+            <div>
+              <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:${p.isDone?'#eee':'#e8f5e9'};color:${color.fill};">${p.isDone?'Completed':p.type==='fdx'?'FedEx':'Workorder'}</span>
+              <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:#f0f0f8;color:${tcolor};margin-left:4px;">${p.tech==='andrei'?'Andrei':'Jiho'}</span>
             </div>
-          </div>`,
-        maxWidth: 240,
+            <a href="https://maps.google.com/maps?daddr=${encodeURIComponent(p.address)}" target="_blank" style="display:inline-block;padding:5px 10px;background:#4a9d6f;color:#fff;border-radius:5px;font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap;">▶ Navigate</a>
+          </div>
+        </div>`,
+        maxWidth: 260,
       });
 
       marker.addListener('click', () => {
@@ -271,29 +439,27 @@
       infoWindows.push(iw);
     });
 
-    // Fit bounds if pins exist
     if (filtered.length > 0 && map) {
       const bounds = new google.maps.LatLngBounds();
       filtered.forEach(p => bounds.extend({ lat: p.lat, lng: p.lng }));
       map.fitBounds(bounds, { top: 40, right: 20, bottom: 20, left: 20 });
       if (filtered.length === 1) map.setZoom(14);
     }
+
+    updateStatusBadges();
   }
 
-  // ── Select pin ─────────────────────────────────────────────────────────
+  // ── Select pin ────────────────────────────────────────────────────────────
   function selectPin(idx, panMap = true) {
     selectedIdx = idx;
-    // Update sidebar highlight
     document.querySelectorAll('.pin-card').forEach(el => el.classList.remove('selected'));
     const card = document.getElementById('card-' + idx);
     if (card) { card.classList.add('selected'); card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-    // Pan map
     if (panMap) {
       const pin = allPins.find(p => p.idx === idx);
       if (pin && map) {
         map.panTo({ lat: pin.lat, lng: pin.lng });
         map.setZoom(14);
-        // Open infowindow for this marker
         const fi = allPins.filter(matchesFilter).findIndex(p => p.idx === idx);
         if (fi >= 0 && infoWindows[fi]) {
           infoWindows.forEach(w => w.close());
@@ -303,39 +469,61 @@
     }
   }
 
-  // ── Filter ──────────────────────────────────────────────────────────────
-  function matchesFilter(p) {
-    if (activeFilter === 'all')    return true;
-    if (activeFilter === 'wo')     return p.type === 'wo';
-    if (activeFilter === 'fdx')    return p.type === 'fdx';
-    if (activeFilter === 'andrei') return p.tech === 'andrei';
-    if (activeFilter === 'jiho')   return p.tech === 'jiho';
-    return true;
+  // ── Mark complete ─────────────────────────────────────────────────────────
+  async function markComplete(idx) {
+    const pin = allPins.find(p => p.idx === idx);
+    if (!pin || pin.isDone) return;
+    if (!confirm('Mark this ticket complete and move to archive?')) return;
+
+    const token = await getSheetToken();
+    if (!token) { alert('Sheet write requires auth — not implemented for read-only key.\nDelete the row manually from the Active Pins sheet for now.'); return; }
+
+    // For now: append to Completed Pins and note completion — full OAuth write would use goog_rewind_token
+    // Simple approach: user deletes row manually; we just update UI
+    alert('To complete: delete row ' + pin.row + ' from the Active Pins sheet.\nThe completed view reads from the "Completed Pins" tab — add it there manually or set up sheet OAuth write.');
   }
 
-  function setFilter(f) {
-    activeFilter = f;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById('f-' + f);
-    if (btn) btn.classList.add('active');
-    renderPins();
+  // Placeholder — sheet writes need OAuth token from Tampermonkey
+  async function getSheetToken() { return null; }
+
+  async function restorePin(idx) {
+    alert('To restore: move the row back to Active Pins manually.');
   }
 
-  // ── Escape HTML ────────────────────────────────────────────────────────
-  function esc(str) {
-    return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // ── GPS location ──────────────────────────────────────────────────────────
+  function startGPS() {
+    if (!navigator.geolocation) return;
+    gpsWatchId = navigator.geolocation.watchPosition(pos => {
+      const { latitude: lat, longitude: lng } = pos.coords;
+      if (!map) return;
+      if (!gpsMarker) {
+        gpsMarker = new google.maps.Marker({
+          position: { lat, lng }, map,
+          title: 'Your location',
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            fillColor: '#4a90d9', fillOpacity: 1,
+            strokeColor: '#fff', strokeWeight: 2, scale: 8,
+          },
+          zIndex: 10,
+        });
+      } else {
+        gpsMarker.setPosition({ lat, lng });
+      }
+    }, err => console.warn('[RW Map] GPS error:', err), { enableHighAccuracy: true });
   }
 
-  // ── FedEx tracking status check ─────────────────────────────────────────
+  function stopGPS() {
+    if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+    gpsMarker?.setMap(null);
+    gpsMarker = null; gpsWatchId = null;
+  }
+
+  // ── FedEx tracking ────────────────────────────────────────────────────────
   async function checkAllTracking() {
-    if (FEDEX_PROXY === 'https://script.google.com/macros/s/AKfycbxcD9yShG29_7OeFGNLLwA1psBZfXLfLiqMxmefplevhd5go0m-fBL81UhixbFTRmo/exec') {
-      alert('Set FEDEX_PROXY to your deployed Apps Script URL in index.html');
-      return;
-    }
     const btn = document.getElementById('btn-track');
     if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
-
-    const fdxPins = allPins.filter(p => p.type === 'fdx');
+    const fdxPins = allPins.filter(p => p.type === 'fdx' || p.isDone);
     const trackingNumbers = [];
     fdxPins.forEach(p => {
       p.note.split('\n').forEach(line => {
@@ -343,34 +531,29 @@
         if (m) trackingNumbers.push(m[1]);
       });
     });
-
     const unique = [...new Set(trackingNumbers)];
-    if (!unique.length) {
-      if (btn) { btn.textContent = 'Check Status'; btn.disabled = false; }
-      return;
+    if (unique.length) {
+      try {
+        for (let i = 0; i < unique.length; i += 10) {
+          const batch = unique.slice(i, i + 10).join(',');
+          const res   = await fetch(FEDEX_PROXY + '?tracking=' + encodeURIComponent(batch));
+          const data  = await res.json();
+          (data.results ?? []).forEach(r => { fedexStatuses[r.tracking] = r; });
+        }
+      } catch(e) { console.error('[RW Map] FedEx error:', e); }
+      updateStatusBadges();
     }
-
-    try {
-      for (let i = 0; i < unique.length; i += 10) {
-        const batch = unique.slice(i, i + 10).join(',');
-        const res   = await fetch(FEDEX_PROXY + '?tracking=' + encodeURIComponent(batch));
-        const data  = await res.json();
-        (data.results ?? []).forEach(r => { fedexStatuses[r.tracking] = r; });
-      }
-    } catch(e) { console.error('[RW Map] FedEx error:', e); }
-
-    updateStatusBadges();
     if (btn) { btn.textContent = 'Check Status'; btn.disabled = false; }
   }
 
   function statusColor(code) {
     if (!code) return '#666';
-    const map = { DL: '#2e7d32', IT: '#1565c0', OD: '#e65100', PU: '#6a1b9a', PX: '#c62828' };
-    return map[code.toUpperCase()] ?? '#555';
+    const m = { DL: '#2e7d32', IT: '#1565c0', OD: '#e65100', PU: '#6a1b9a', PX: '#c62828' };
+    return m[code.toUpperCase()] ?? '#555';
   }
 
   function updateStatusBadges() {
-    allPins.filter(p => p.type === 'fdx').forEach(p => {
+    allPins.filter(p => p.type === 'fdx' || p.isDone).forEach(p => {
       const el = document.getElementById('fdx-status-' + p.idx);
       if (!el) return;
       const badges = p.note.split('\n').map(line => {
@@ -387,7 +570,12 @@
     });
   }
 
-  // ── Dark map styles ────────────────────────────────────────────────────
+  // ── Escape HTML ───────────────────────────────────────────────────────────
+  function esc(str) {
+    return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Dark map styles ───────────────────────────────────────────────────────
   function darkMapStyles() {
     return [
       { elementType:'geometry', stylers:[{color:'#1a1a2e'}] },
