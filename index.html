@@ -207,7 +207,7 @@
   const PINS_TAB    = 'Active Pins';
   const DONE_TAB    = 'Completed Pins';
   const SHEETS_KEY  = 'AIzaSyCTvNZrwA_E8uG3nUsM8ihdYMFBwsUm27k';
-  const FEDEX_PROXY = 'https://script.google.com/macros/s/AKfycbw2sPFWHHIp237jivwR2_MoWp5-FO_8833aRFFisAK_168W6pnEmmFm7ipGsWRVhQrUlg/exec';
+  const FEDEX_PROXY = 'https://script.google.com/macros/s/AKfycbyRqZ638Db_hr72kJ17Jzl_K775QpkaqzNe1TIQD_yU35zra1gCvEuQE8Tus6c0c7f8Xg/exec';
 
   const PINS = {
     andrei: { pin: '3784', label: 'Andrei', admin: false },
@@ -479,11 +479,8 @@
     if (card) card.style.opacity = '0.5';
 
     try {
-      await fetch(FEDEX_PROXY, {
-        method: 'POST',
-        mode: 'no-cors',
-        body: JSON.stringify({ action: 'complete', row: pin.row }),
-      });
+      const completeUrl = FEDEX_PROXY + '?action=complete&row=' + pin.row;
+      await fetch(completeUrl, { mode: 'no-cors' });
       console.log('[RW Map] Complete request sent for row', pin.row);
       await new Promise(r => setTimeout(r, 2000)); // wait for Apps Script to process
       await loadPins();
@@ -503,11 +500,8 @@
     if (card) card.style.opacity = '0.5';
 
     try {
-      await fetch(FEDEX_PROXY, {
-        method: 'POST',
-        mode: 'no-cors',
-        body: JSON.stringify({ action: 'restore', row: pin.row }),
-      });
+      const restoreUrl = FEDEX_PROXY + '?action=restore&row=' + pin.row;
+      await fetch(restoreUrl, { mode: 'no-cors' });
       console.log('[RW Map] Restore request sent for row', pin.row);
       await new Promise(r => setTimeout(r, 2000));
       await loadPins();
