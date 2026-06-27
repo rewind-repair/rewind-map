@@ -473,21 +473,43 @@
   async function markComplete(idx) {
     const pin = allPins.find(p => p.idx === idx);
     if (!pin || pin.isDone) return;
-    if (!confirm('Mark this ticket complete and move to archive?')) return;
+    if (!confirm('Mark CNI ' + (pin.cni || pin.address) + ' complete and move to archive?')) return;
 
-    const token = await getSheetToken();
-    if (!token) { alert('Sheet write requires auth — not implemented for read-only key.\nDelete the row manually from the Active Pins sheet for now.'); return; }
+    const card = document.getElementById('card-' + idx);
+    if (card) card.style.opacity = '0.5';
 
-    // For now: append to Completed Pins and note completion — full OAuth write would use goog_rewind_token
-    // Simple approach: user deletes row manually; we just update UI
-    alert('To complete: delete row ' + pin.row + ' from the Active Pins sheet.\nThe completed view reads from the "Completed Pins" tab — add it there manually or set up sheet OAuth write.');
+    try {
+      const res  = await fetch(FEDEX_PROXY + '?action=complete&row=' + pin.row);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      console.log('[RW Map] Completed:', data.message);
+      await loadPins(); // Refresh to move pin to completed tab
+    } catch(e) {
+      console.error('[RW Map] Complete error:', e);
+      alert('Error: ' + e.message);
+      if (card) card.style.opacity = '1';
+    }
   }
 
-  // Placeholder — sheet writes need OAuth token from Tampermonkey
-  async function getSheetToken() { return null; }
-
   async function restorePin(idx) {
-    alert('To restore: move the row back to Active Pins manually.');
+    const pin = allPins.find(p => p.idx === idx);
+    if (!pin || !pin.isDone) return;
+    if (!confirm('Restore this pin to Active Pins?')) return;
+
+    const card = document.getElementById('card-' + idx);
+    if (card) card.style.opacity = '0.5';
+
+    try {
+      const res  = await fetch(FEDEX_PROXY + '?action=restore&row=' + pin.row);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      console.log('[RW Map] Restored:', data.message);
+      await loadPins();
+    } catch(e) {
+      console.error('[RW Map] Restore error:', e);
+      alert('Error: ' + e.message);
+      if (card) card.style.opacity = '1';
+    }
   }
 
   // ── GPS location ──────────────────────────────────────────────────────────
