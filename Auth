@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><title>Authorizing...</title></head>
+<body>
+<script>
+  // This page exists solely to receive the OAuth redirect and close itself.
+  // The parent window's popup poller reads the token from this window's URL.
+  if (window.opener) {
+    // Let the parent poll our URL, then we close
+    setTimeout(() => window.close(), 2000);
+  } else {
+    // Opened directly (not as popup) — redirect back to map with hash intact
+    window.location.href = '/rewind-map/' + window.location.hash;
+  }
+</script>
+<p style="font-family:system-ui;text-align:center;margin-top:40px;color:#888;">Authorizing... this window will close automatically.</p>
+</body>
+</html>
