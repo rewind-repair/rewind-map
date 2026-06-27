@@ -243,11 +243,36 @@
       scope:         OAUTH_SCOPE,
       include_granted_scopes: 'true',
     });
-    window.open('https://accounts.google.com/o/oauth2/v2/auth?' + params, 'rw_sheets_oauth', 'width=500,height=600');
+    const popup = window.open(
+      'https://accounts.google.com/o/oauth2/v2/auth?' + params,
+      'rw_sheets_oauth', 'width=500,height=600'
+    );
+    // Poll popup for token in URL hash
+    const timer = setInterval(() => {
+      try {
+        if (!popup || popup.closed) { clearInterval(timer); return; }
+        const url = popup.location.href;
+        if (url.includes('access_token')) {
+          clearInterval(timer);
+          const fragment = url.includes('#') ? url.split('#')[1] : url.split('?')[1];
+          const hash = new URLSearchParams(fragment);
+          const token   = hash.get('access_token');
+          const expires = Date.now() + parseInt(hash.get('expires_in') ?? '3600') * 1000;
+          if (token) {
+            sheetsToken = token;
+            sessionStorage.setItem('rw_sheets_token', JSON.stringify({ token, expires }));
+            updateAuthButton();
+            console.log('[RW Map] Sheets OAuth token received');
+          }
+          popup.close();
+        }
+      } catch(e) {} // cross-origin errors until redirect completes
+    }, 500);
   }
 
-  // Handle OAuth token returned in URL hash after redirect
+  // No-op — token is handled by the popup poller above
   function checkOAuthCallback() {
+    // Check if we were redirected back with a token (fallback for browsers that block popups)
     const hash = window.location.hash;
     if (!hash.includes('access_token')) return;
     const params = new URLSearchParams(hash.slice(1));
@@ -256,10 +281,8 @@
     if (token) {
       sheetsToken = token;
       sessionStorage.setItem('rw_sheets_token', JSON.stringify({ token, expires }));
-      // Clean up URL
       history.replaceState(null, '', window.location.pathname);
       updateAuthButton();
-      console.log('[RW Map] Sheets OAuth token received');
     }
   }
 
@@ -565,7 +588,7 @@
     try {
       // 1. Read the row data from Active Pins
       const rowData = await sheetsRequest('GET',
-        '/values/' + encodeURIComponent(ACTIVE_TAB + '!A' + pin.row + ':H' + pin.row)
+        '/values/' + encodeURIComponent(PINS_TAB + '!A' + pin.row + ':H' + pin.row)
       );
       const values = rowData.values?.[0];
       if (!values) throw new Error('Row not found in Active Pins');
@@ -592,7 +615,7 @@
 
       // 4. Delete from Active Pins
       const sheetMeta = await sheetsRequest('GET', '');
-      const activeSheet = sheetMeta.sheets?.find(s => s.properties.title === ACTIVE_TAB);
+      const activeSheet = sheetMeta.sheets?.find(s => s.properties.title === PINS_TAB);
       if (activeSheet) {
         await sheetsRequest('POST', ':batchUpdate', {
           requests: [{
@@ -636,7 +659,7 @@
 
       // 2. Append to Active Pins
       await sheetsRequest('POST',
-        '/values/' + encodeURIComponent(ACTIVE_TAB + '!A:H') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',
+        '/values/' + encodeURIComponent(PINS_TAB + '!A:H') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',
         { values: [values.slice(0, 8)] }
       );
 
