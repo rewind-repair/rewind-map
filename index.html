@@ -168,6 +168,7 @@
     <button class="btn-refresh" onclick="toggleTheme()" id="btn-theme">☀ Light</button>
     <button class="btn-refresh" onclick="loadPins()">↺ Refresh</button>
     <button class="btn-refresh" id="btn-track" onclick="checkAllTracking()" style="background:#3a2a10;border-color:#e8a020;color:#e8a020;">📦 Check Status</button>
+    <button class="btn-refresh" id="btn-auth" onclick="startSheetsOAuth()" style="border-color:#e8a020;color:#e8a020;">🔑 Authorize Sheet</button>
     <button class="btn-refresh" onclick="doLogout()" style="border-color:#c62828;color:#c62828;">Sign Out</button>
   </div>
   <div>
@@ -207,7 +208,10 @@
   const PINS_TAB    = 'Active Pins';
   const DONE_TAB    = 'Completed Pins';
   const SHEETS_KEY  = 'AIzaSyCTvNZrwA_E8uG3nUsM8ihdYMFBwsUm27k';
-  const FEDEX_PROXY = 'https://script.google.com/macros/s/AKfycbyRqZ638Db_hr72kJ17Jzl_K775QpkaqzNe1TIQD_yU35zra1gCvEuQE8Tus6c0c7f8Xg/exec';
+  const FEDEX_PROXY   = 'https://script.google.com/macros/s/AKfycbzeBVsn4MjaAzy_luDWWkrcB_Ixtb9tJapDqrfqbY901nBZjOdcndRKger5152l45W7nw/exec';
+  const OAUTH_CLIENT  = '980502842865-jib81s32l4hlr5sncbhbfpp4so20jlu1.apps.googleusercontent.com';
+  const OAUTH_REDIRECT = 'https://rewind-repair.github.io/rewind-map/';
+  const OAUTH_SCOPE   = 'https://www.googleapis.com/auth/spreadsheets';
 
   const PINS = {
     andrei: { pin: '3784', label: 'Andrei', admin: false },
@@ -217,6 +221,80 @@
   // ── Auth state ────────────────────────────────────────────────────────────
   let currentUser = null; // 'andrei' | 'jiho'
   let isAdmin     = false;
+
+  // ── Sheets OAuth ────────────────────────────────────────────────────────
+  function getSheetsToken() {
+    // Check sessionStorage first
+    const stored = sessionStorage.getItem('rw_sheets_token');
+    if (stored) {
+      try {
+        const { token, expires } = JSON.parse(stored);
+        if (Date.now() < expires - 60000) { sheetsToken = token; return token; }
+      } catch {}
+    }
+    return null;
+  }
+
+  function startSheetsOAuth() {
+    const params = new URLSearchParams({
+      client_id:     OAUTH_CLIENT,
+      redirect_uri:  OAUTH_REDIRECT,
+      response_type: 'token',
+      scope:         OAUTH_SCOPE,
+      include_granted_scopes: 'true',
+    });
+    window.open('https://accounts.google.com/o/oauth2/v2/auth?' + params, 'rw_sheets_oauth', 'width=500,height=600');
+  }
+
+  // Handle OAuth token returned in URL hash after redirect
+  function checkOAuthCallback() {
+    const hash = window.location.hash;
+    if (!hash.includes('access_token')) return;
+    const params = new URLSearchParams(hash.slice(1));
+    const token   = params.get('access_token');
+    const expires = Date.now() + parseInt(params.get('expires_in') ?? '3600') * 1000;
+    if (token) {
+      sheetsToken = token;
+      sessionStorage.setItem('rw_sheets_token', JSON.stringify({ token, expires }));
+      // Clean up URL
+      history.replaceState(null, '', window.location.pathname);
+      updateAuthButton();
+      console.log('[RW Map] Sheets OAuth token received');
+    }
+  }
+
+  function updateAuthButton() {
+    const btn = document.getElementById('btn-auth');
+    if (!btn) return;
+    if (sheetsToken) {
+      btn.textContent = '✓ Sheet Access';
+      btn.style.borderColor = '#4a9d6f';
+      btn.style.color = '#4a9d6f';
+    } else {
+      btn.textContent = '🔑 Authorize Sheet';
+      btn.style.borderColor = '#e8a020';
+      btn.style.color = '#e8a020';
+    }
+  }
+
+  async function sheetsRequest(method, path, body) {
+    if (!sheetsToken) throw new Error('Not authorized — click Authorize Sheet first');
+    const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + path, {
+      method,
+      headers: {
+        'Authorization': 'Bearer ' + sheetsToken,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 401) {
+      sheetsToken = null;
+      sessionStorage.removeItem('rw_sheets_token');
+      updateAuthButton();
+      throw new Error('Token expired — please re-authorize');
+    }
+    return res.json();
+  }
 
   function doLogin() {
     const entered = document.getElementById('login-pin').value.trim();
@@ -230,6 +308,9 @@
     isAdmin     = match[1].admin;
     sessionStorage.setItem('rw_user', currentUser);
     document.getElementById('login-overlay').style.display = 'none';
+    // Restore any existing sheets token
+    getSheetsToken();
+    updateAuthButton();
     document.getElementById('user-label').textContent = match[1].label + (isAdmin ? ' · Admin' : '');
 
     // Hide tech filter buttons if not admin
@@ -255,6 +336,7 @@
     document.getElementById('login-pin').addEventListener('keydown', e => {
       if (e.key === 'Enter') doLogin();
     });
+    checkOAuthCallback();
     const saved = sessionStorage.getItem('rw_user');
     if (saved && PINS[saved]) {
       document.getElementById('login-pin').value = PINS[saved].pin;
@@ -281,6 +363,7 @@
 
   let map, allPins = [], markers = [], infoWindows = [], activeFilter = 'all', selectedIdx = null;
   let fedexStatuses = {};
+  let sheetsToken = null;
   let gpsMarker = null, gpsWatchId = null;
 
   // ── Map init ──────────────────────────────────────────────────────────────
@@ -469,20 +552,63 @@
     }
   }
 
-  // ── Mark complete ─────────────────────────────────────────────────────────
+  // ── Mark complete (Sheets API) ───────────────────────────────────────────
   async function markComplete(idx) {
     const pin = allPins.find(p => p.idx === idx);
     if (!pin || pin.isDone) return;
+    if (!sheetsToken) { alert('Click "Authorize Sheet" first to enable this feature.'); return; }
     if (!confirm('Mark CNI ' + (pin.cni || pin.address) + ' complete and move to archive?')) return;
 
     const card = document.getElementById('card-' + idx);
     if (card) card.style.opacity = '0.5';
 
     try {
-      const completeUrl = FEDEX_PROXY + '?action=complete&row=' + pin.row;
-      await fetch(completeUrl, { mode: 'no-cors' });
-      console.log('[RW Map] Complete request sent for row', pin.row);
-      await new Promise(r => setTimeout(r, 2000)); // wait for Apps Script to process
+      // 1. Read the row data from Active Pins
+      const rowData = await sheetsRequest('GET',
+        '/values/' + encodeURIComponent(ACTIVE_TAB + '!A' + pin.row + ':H' + pin.row)
+      );
+      const values = rowData.values?.[0];
+      if (!values) throw new Error('Row not found in Active Pins');
+
+      // 2. Ensure Completed Pins tab exists with headers
+      try {
+        await sheetsRequest('GET', '/values/' + encodeURIComponent(DONE_TAB + '!A1'));
+      } catch {
+        // Tab doesn't exist — create via batchUpdate
+        await sheetsRequest('POST', ':batchUpdate', {
+          requests: [{ addSheet: { properties: { title: DONE_TAB } } }]
+        });
+        await sheetsRequest('PUT',
+          '/values/' + encodeURIComponent(DONE_TAB + '!A1:I1') + '?valueInputOption=RAW',
+          { values: [['Type','Tech','Address','Note','CNI','Lat','Lng','Date Added','Completed']] }
+        );
+      }
+
+      // 3. Append to Completed Pins
+      await sheetsRequest('POST',
+        '/values/' + encodeURIComponent(DONE_TAB + '!A:I') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',
+        { values: [[...values, new Date().toLocaleDateString()]] }
+      );
+
+      // 4. Delete from Active Pins
+      const sheetMeta = await sheetsRequest('GET', '');
+      const activeSheet = sheetMeta.sheets?.find(s => s.properties.title === ACTIVE_TAB);
+      if (activeSheet) {
+        await sheetsRequest('POST', ':batchUpdate', {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId:    activeSheet.properties.sheetId,
+                dimension:  'ROWS',
+                startIndex: pin.row - 1,
+                endIndex:   pin.row,
+              }
+            }
+          }]
+        });
+      }
+
+      console.log('[RW Map] Completed pin row', pin.row);
       await loadPins();
     } catch(e) {
       console.error('[RW Map] Complete error:', e);
@@ -494,16 +620,45 @@
   async function restorePin(idx) {
     const pin = allPins.find(p => p.idx === idx);
     if (!pin || !pin.isDone) return;
+    if (!sheetsToken) { alert('Click "Authorize Sheet" first.'); return; }
     if (!confirm('Restore this pin to Active Pins?')) return;
 
     const card = document.getElementById('card-' + idx);
     if (card) card.style.opacity = '0.5';
 
     try {
-      const restoreUrl = FEDEX_PROXY + '?action=restore&row=' + pin.row;
-      await fetch(restoreUrl, { mode: 'no-cors' });
-      console.log('[RW Map] Restore request sent for row', pin.row);
-      await new Promise(r => setTimeout(r, 2000));
+      // 1. Read row from Completed Pins
+      const rowData = await sheetsRequest('GET',
+        '/values/' + encodeURIComponent(DONE_TAB + '!A' + pin.row + ':H' + pin.row)
+      );
+      const values = rowData.values?.[0];
+      if (!values) throw new Error('Row not found in Completed Pins');
+
+      // 2. Append to Active Pins
+      await sheetsRequest('POST',
+        '/values/' + encodeURIComponent(ACTIVE_TAB + '!A:H') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',
+        { values: [values.slice(0, 8)] }
+      );
+
+      // 3. Delete from Completed Pins
+      const sheetMeta = await sheetsRequest('GET', '');
+      const doneSheet = sheetMeta.sheets?.find(s => s.properties.title === DONE_TAB);
+      if (doneSheet) {
+        await sheetsRequest('POST', ':batchUpdate', {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId:    doneSheet.properties.sheetId,
+                dimension:  'ROWS',
+                startIndex: pin.row - 1,
+                endIndex:   pin.row,
+              }
+            }
+          }]
+        });
+      }
+
+      console.log('[RW Map] Restored pin row', pin.row);
       await loadPins();
     } catch(e) {
       console.error('[RW Map] Restore error:', e);
