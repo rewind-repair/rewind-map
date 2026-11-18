@@ -166,6 +166,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
+const APP_VERSION = '3.5';
 
 // ── Small helpers ─────────────────────────────────────────────────────────
 const $ = s => document.querySelector(s);
@@ -258,7 +259,7 @@ function stamp(html) {
   if (html) { s.innerHTML = html; s.className = ''; return; }
   const when = lastAt ? new Date(lastAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'never';
   s.className = offline ? 'offline' : '';
-  s.textContent = (offline ? 'Offline — showing jobs from ' : 'Updated ') + when + ' · ' + jobs.length + ' open job' + (jobs.length === 1 ? '' : 's');
+  s.textContent = (offline ? 'Offline — showing jobs from ' : 'Updated ') + when + ' · ' + jobs.length + ' open job' + (jobs.length === 1 ? '' : 's') + ' · v' + APP_VERSION;
 }
 
 // ── Views ─────────────────────────────────────────────────────────────────
