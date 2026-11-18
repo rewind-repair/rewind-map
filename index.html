@@ -174,7 +174,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.10';
+const APP_VERSION = '3.11';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -880,7 +880,7 @@ function partChip(f) {
 function returnChip(f) {
   const d = f.daysLeft;
   const cls = d <= 1 ? 'red' : d <= 2 ? 'amber' : 'green';
-  const txt = d < 0 ? 'Past return date (' + f.returnBy + ')' : d === 0 ? 'Goes back today' : d + ' day' + (d === 1 ? '' : 's') + ' left · back ' + f.returnBy;
+  const txt = d < 0 ? 'Past last pickup day (' + f.returnBy + ')' : d === 0 ? 'Last pickup day today' : d + ' day' + (d === 1 ? '' : 's') + ' left · pick up by ' + f.returnBy;
   return '<span class="chip ' + cls + '">⏳ ' + esc(txt) + (f.extended ? ' · extended +' + f.extended : '') + '</span>';
 }
 async function extendHold(tracking, cni) {
