@@ -527,9 +527,11 @@ async function openClosure(cni) {
   const yes = v => /^(yes|y|true|successful)$/i.test(String(v || '').trim());
   const draft = store.get('rw_close_' + cni, {});
   const field = f => {
-    if (f.kind === 'auto' || f.kind === 'auto-email') return '';
+    if (f.kind === 'auto' || f.kind === 'auto-email' || f.kind === 'skip') return '';
+    if (f.kind === 'files') return '<label class="f" data-col="' + f.col + '"><span>' + esc(f.label) + '</span>' +
+      '<input class="in" type="file" id="f_' + f.key + '" accept="image/*" multiple onchange="showPicks(this)"><div class="small" id="picks"></div></label>';
     const id = 'f_' + f.key, req = f.required ? ' <i>*</i>' : '';
-    let val = draft[f.key] ?? (f.kind === 'cni' ? cni : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : f.kind === 'date' ? todayISO() : '');
+    let val = draft[f.key] ?? (f.kind === 'cni' ? cni + (j.wo ? ' / ' + j.wo : '') : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : f.kind === 'date' ? todayISO() : '');
     let input;
     if (f.kind === 'choice') {
       input = '<div class="seg" data-key="' + f.key + '">' + f.choices.map(c => '<button type="button" class="' + (val === c ? 'on' : '') + '" onclick="segPick(this)">' + esc(c) + '</button>').join('') + '</div>' +
@@ -563,8 +565,30 @@ function segPick(btn) {
 }
 function closureValues() {
   const v = {};
-  schema.fields.forEach(f => { const el = $('#f_' + f.key); if (el && !el.closest('.hidden')) v[f.key] = el.value; });
+  schema.fields.forEach(f => { if (f.kind === 'files') return; const el = $('#f_' + f.key); if (el && !el.closest('.hidden')) v[f.key] = el.value; });
   return v;
+}
+function showPicks(inp) { $('#picks').textContent = inp.files.length ? inp.files.length + ' photo' + (inp.files.length === 1 ? '' : 's') + ' selected' : ''; }
+// Photos are shrunk on the phone (max 1600 px, JPEG) before upload
+function shrink(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve({ name: file.name.replace(/\.\w+$/, '') + '.jpg', data: c.toDataURL('image/jpeg', 0.8) });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read ' + file.name)); };
+    img.src = url;
+  });
+}
+async function closureFiles() {
+  const f = schema.fields.find(x => x.kind === 'files');
+  const el = f && $('#f_' + f.key);
+  if (!el || !el.files.length) return [];
+  return Promise.all([...el.files].slice(0, 10).map(shrink));
 }
 function saveDraft(cni) { store.set('rw_close_' + cni, closureValues()); }
 async function submitClosure(cni) {
@@ -574,7 +598,9 @@ async function submitClosure(cni) {
   if (!confirm('Submit the closure for CNI ' + cni + '?')) return;
   const b = $('#cf-send'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…';
   try {
-    await api('close', { cni, values: v });
+    const files = await closureFiles();
+    if (files.length) b.innerHTML = '<span class="spin"></span> Uploading ' + files.length + ' photo' + (files.length === 1 ? '' : 's') + '…';
+    await api('close', { cni, values: v, files });
     store.del('rw_close_' + cni);
     toast('Closure submitted ✓', 3500);
     closeSheet(); history.back();
