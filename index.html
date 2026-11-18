@@ -174,7 +174,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.8';
+const APP_VERSION = '3.9';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -268,14 +268,15 @@ function pickTech(t) { techFilter = t; store.set('rw_tech', t); parts = null; re
 async function refresh(loud) {
   if (!session) return;
   stamp('<span class="spin"></span> Updating…');
+  if (view === 'parts' || parts === null || loud) loadParts();       // in parallel with the job list
   try {
     const j = await api('jobs', { tech: techFilter });
     jobs = j.jobs; lastAt = j.at; offline = false;
     setUnread(j.unread);
     store.set('rw_jobs_' + session.user.name + '_' + techFilter, { jobs, at: lastAt });
     render();
-    if (view === 'parts' || parts === null) loadParts();
     if (loud) toast('Up to date');
+    setTimeout(prefetchDetails, 1500);
   } catch (e) {
     offline = !navigator.onLine || /fetch|network/i.test(e.message);
     render();
@@ -519,11 +520,22 @@ window.addEventListener('popstate', () => closeSheet());
 
 async function openJob(cni) {
   const j = jobs.find(x => x.cni === cni) || { cni };
-  sheet(esc(j.company || 'CNI ' + cni), jobTop(j) + '<div id="det"><div class="empty"><span class="spin"></span> Loading details…</div></div>');
+  // Last copy from this phone shows at once; the fresh one replaces it when it arrives
+  const seen = store.get('rw_det_' + cni, null);
+  sheet(esc(j.company || 'CNI ' + cni), jobTop(j) + '<div id="det">' + (seen ? detailsHtml(seen) : '<div class="empty"><span class="spin"></span> Loading details…</div>') + '</div>');
   try {
     const d = (await api('details', { cni })).details;
+    store.set('rw_det_' + cni, d);
     if ($('#det')) $('#det').innerHTML = detailsHtml(d);
-  } catch (e) { if ($('#det')) $('#det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+  } catch (e) { if ($('#det') && !seen) $('#det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+// Fetch details for today's jobs in the background so opening them is instant
+async function prefetchDetails() {
+  const t = todayISO(), list = jobs.filter(j => j.appt && j.appt.date <= addDays(t, 1)).slice(0, 8);
+  for (const j of list) {
+    if (document.hidden || $('#sheet')) return;
+    try { store.set('rw_det_' + j.cni, (await api('details', { cni: j.cni })).details); } catch (e) { return; }
+  }
 }
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
