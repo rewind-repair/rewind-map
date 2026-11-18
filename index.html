@@ -524,10 +524,11 @@ async function openClosure(cni) {
   sheet('Close CNI ' + esc(cni), '<div id="cf"><div class="empty"><span class="spin"></span> Loading form…</div></div>');
   try { const s = (await api('schema')).schema; schema = s; store.set('rw_schema', s); }
   catch (e) { if (!schema) { $('#cf').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; } }
+  fixSchema(schema);
   const yes = v => /^(yes|y|true|successful)$/i.test(String(v || '').trim());
   const draft = store.get('rw_close_' + cni, {});
   const field = f => {
-    if (f.kind === 'auto' || f.kind === 'auto-email' || f.kind === 'skip') return '';
+    if (f.kind === 'auto' || f.kind === 'auto-email' || f.kind === 'skip' || f.kind === 'cne') return '';
     if (f.kind === 'files') return '<label class="f" data-col="' + f.col + '"><span>' + esc(f.label) + '</span>' +
       '<input class="in" type="file" id="f_' + f.key + '" accept="image/*" multiple onchange="showPicks(this)"><div class="small" id="picks"></div></label>';
     const id = 'f_' + f.key, req = f.required ? ' <i>*</i>' : '';
@@ -556,6 +557,19 @@ async function openClosure(cni) {
   segPick.after = () => { syncFail(); saveDraft(cni); };
   $('#cf').addEventListener('input', () => saveDraft(cni));
   syncFail();
+}
+// Same rules as the relay, so the form is right even before the relay is redeployed
+function fixSchema(sc) {
+  sc.fields.forEach(f => {
+    const l = String(f.label || '').trim();
+    if (!l || /^column \d+$/i.test(l)) f.kind = 'skip';
+    else if (/picture|photo|file|image|upload/i.test(l) && f.kind !== 'auto') f.kind = 'files';
+    else if (f.col !== 1 && /^\s*(?:cne|wo|work ?order)\s*(?:#|no\.?|number)?\s*$/i.test(l)) f.kind = 'cne';
+    if (f.kind === 'agent') f.kind = 'text';
+    if (f.col > sc.successCol && f.col <= 13) f.onlyIfFailed = true;
+    f.required = !f.onlyIfFailed && !['auto', 'auto-email', 'skip', 'files', 'cne'].includes(f.kind);
+  });
+  return sc;
 }
 function segPick(btn) {
   const seg = btn.parentElement;
