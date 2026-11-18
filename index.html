@@ -57,6 +57,11 @@
   nav button { flex: 1; background: none; border: none; padding: 9px 4px 8px; font-size: 11px; color: var(--sub); display: flex; flex-direction: column; align-items: center; gap: 2px; }
   nav button b { font-size: 19px; line-height: 1; font-weight: 400; }
   nav button.on { color: var(--accent); }
+  #bell-badge .badge { position: absolute; top: -6px; right: -6px; margin: 0; }
+  .notif { cursor: pointer; }
+  .notif.unread { border-left: 3px solid var(--accent); }
+  .notif .t { font-weight: 700; font-size: 14px; }
+  .notif:not(.unread) .t { font-weight: 500; color: var(--sub); }
   nav .badge { background: var(--red); color: #fff; border-radius: 9px; font-size: 10px; padding: 0 5px; margin-left: 3px; }
 
   /* Lists */
@@ -138,6 +143,7 @@
     <div class="who" id="who"></div>
   </div>
   <select id="tech-pick" class="hidden" onchange="pickTech(this.value)"></select>
+  <button class="icon-btn" onclick="openNotifs()" title="Notifications" style="position:relative">🔔<span id="bell-badge"></span></button>
   <button class="icon-btn" onclick="refresh(true)" title="Refresh">↻</button>
   <button class="icon-btn" onclick="toggleTheme()" title="Light / dark" id="theme-btn">◐</button>
   <button class="icon-btn" onclick="if(confirm('Sign out?'))logout()" title="Sign out" style="font-size:12px">Sign out</button>
@@ -166,7 +172,8 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.5';
+const APP_VERSION = '3.7';
+const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
 const $ = s => document.querySelector(s);
@@ -234,6 +241,8 @@ function start() {
   const cached = store.get('rw_jobs_' + u.name + '_' + techFilter, null);
   if (cached) { jobs = cached.jobs; lastAt = cached.at; render(); }
   refresh();
+  openFromLink();
+  if (pushSupported() && Notification.permission === 'granted') enablePush(true);   // keep the subscription fresh
   clearInterval(start.t); start.t = setInterval(() => { if (!document.hidden) refresh(); }, AUTO_REFRESH_MIN * 60e3);
 }
 function pickTech(t) { techFilter = t; store.set('rw_tech', t); parts = null; refresh(true); }
@@ -244,6 +253,7 @@ async function refresh(loud) {
   try {
     const j = await api('jobs', { tech: techFilter });
     jobs = j.jobs; lastAt = j.at; offline = false;
+    setUnread(j.unread);
     store.set('rw_jobs_' + session.user.name + '_' + techFilter, { jobs, at: lastAt });
     render();
     if (view === 'parts' || parts === null) loadParts();
@@ -368,6 +378,90 @@ function renderMap() {
   if (markers.length) { map.fitBounds(bounds, 40); if (markers.length === 1) map.setZoom(13); }
 }
 
+// ── Notifications ─────────────────────────────────────────────────────────
+let unread = 0, notifs = [];
+function setUnread(n) {
+  if (n == null) return;
+  unread = n;
+  $('#bell-badge').innerHTML = n ? '<span class="badge">' + (n > 99 ? '99+' : n) + '</span>' : '';
+  try { if (navigator.setAppBadge) n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) {}
+}
+async function openNotifs() {
+  sheet('Notifications', pushCard() + '<div class="row between" style="margin-bottom:8px"><span class="small" id="n-count"></span>' +
+    '<button class="act" style="padding:6px 12px" onclick="markRead(null)">Mark all read</button></div><div id="n-list"><div class="empty"><span class="spin"></span></div></div>');
+  try { const j = await api('notifs'); notifs = j.notifs; setUnread(j.unread); renderNotifs(); }
+  catch (e) { $('#n-list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+function renderNotifs() {
+  if (!$('#n-list')) return;
+  $('#n-count').textContent = unread ? unread + ' unread' : 'All read';
+  $('#n-list').innerHTML = notifs.length ? notifs.map(n =>
+    '<div class="card notif ' + (n.read ? '' : 'unread') + '" onclick="tapNotif(' + n.id + ')">' +
+      '<div class="t">' + esc(n.title) + '</div>' +
+      (n.body ? '<div class="pre small" style="margin-top:3px;color:var(--sub)">' + esc(n.body) + '</div>' : '') +
+      '<div class="small" style="margin-top:4px">' + esc(new Date(n.time).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })) +
+        (n.from ? ' · ' + esc(n.from) : '') + '</div>' +
+    '</div>').join('') : '<div class="empty">No notifications in the last 30 days</div>';
+}
+async function markRead(ids) {
+  notifs.forEach(n => { if (!ids || ids.includes(n.id)) n.read = true; });
+  setUnread(notifs.filter(n => !n.read).length); renderNotifs();
+  try { const j = await api('markread', ids ? { ids } : { all: true }); setUnread(j.unread); } catch (e) { toast(e.message, 4000); }
+}
+function tapNotif(id) {
+  const n = notifs.find(x => x.id === id);
+  if (!n) return;
+  if (!n.read) markRead([id]);
+  if (n.cni && jobs.some(j => j.cni === n.cni)) openJob(n.cni);
+}
+// ── Phone notifications (Web Push) ──
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function pushCard() {
+  if (pushSupported() && Notification.permission === 'granted' && store.get('rw_push_on', false)) return '';
+  const msg = isIOS && !standalone() ? 'To get notifications on iPhone: Share → <b>Add to Home Screen</b>, open the app from the icon, then tap here.'
+    : !pushSupported() ? 'This browser can\'t show notifications.'
+    : Notification.permission === 'denied' ? 'Notifications are blocked for this site — allow them in the browser / phone settings.'
+    : 'Get a phone notification when a job is pinned or changed, a part is ready, or dispatch asks for an update.';
+  const can = pushSupported() && !(isIOS && !standalone()) && Notification.permission !== 'denied';
+  return '<div class="card" id="push-card" style="margin-bottom:10px"><div class="small" style="margin-bottom:8px">' + msg + '</div>' +
+    (can ? '<button class="act primary" style="width:100%" onclick="enablePush()">🔔 Turn on phone notifications</button>' : '') + '</div>';
+}
+function b64ToBytes(b) { const s = atob(b.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b.length + 3) % 4)); return Uint8Array.from(s, c => c.charCodeAt(0)); }
+async function enablePush(quiet) {
+  try {
+    if (!pushSupported()) throw new Error('Not supported in this browser');
+    const perm = quiet ? Notification.permission : await Notification.requestPermission();
+    if (perm !== 'granted') { if (!quiet) toast('Notifications not allowed'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) });
+    await api('subscribe', { sub: sub.toJSON() });
+    store.set('rw_push_on', true);
+    if (!quiet) { toast('Phone notifications on ✓'); const c = $('#push-card'); if (c) c.remove(); }
+  } catch (e) { if (!quiet) toast(e.message, 5000); }
+}
+// Opened from a notification: ?cni=1838780 (or a message from the service worker)
+function openFromLink() {
+  const c = new URLSearchParams(location.search).get('cni');
+  if (!c) return;
+  history.replaceState(null, '', location.pathname);
+  const go = () => jobs.some(j => j.cni === c) ? openJob(c) : setTimeout(go, 800);
+  go();
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.open) { refresh(); openJob(e.data.open); } });
+
+// Admin → tech about this ticket
+async function messageTech(cni, kind) {
+  const text = prompt(kind === 'update' ? 'Update request (optional note):' : 'Message to the tech:', '');
+  if (text === null) return;
+  if (kind === 'message' && !text.trim()) return;
+  const teams = confirm('Also post it in the tech\'s Teams chat?');
+  try { await api('notifytech', { cni, kind, text, teams }); toast(kind === 'update' ? 'Update requested' : 'Message sent'); }
+  catch (e) { toast(e.message, 4000); }
+}
+
 // ── Job details ───────────────────────────────────────────────────────────
 function sheet(title, html) {
   closeSheet();
@@ -415,6 +509,9 @@ function jobTop(j) {
         return '<button class="act" onclick="sendUpdate(\'' + j.cni + '\',\'' + k + '\')">' + l + '</button>';
       }).join('') +
     '</div></div>' +
+    (session.user.admin ? '<div class="sec"><h3>Admin → ' + esc(j.tech || 'tech') + '</h3><div class="actions" style="grid-template-columns:1fr 1fr">' +
+      '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'message\')">💬 Message tech</button>' +
+      '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'update\')">🔄 Request update</button></div></div>' : '') +
     '<div class="sec"><button class="act primary wide" style="width:100%" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button></div>';
 }
 function attemptsLabel(n) {
