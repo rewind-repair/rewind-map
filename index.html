@@ -446,6 +446,7 @@ function kv(obj, skip) {
 function detailsHtml(d) {
   let h = '<div class="sec"><h3>Contact attempts</h3><div id="att-list">' + attemptsHtml(d.attempts || []) + '</div></div>';
   const jj = jobs.find(x => x.cni === d.cni); if (jj && d.attempts) { jj.attempts = d.attempts.length; if ($('#att-count')) $('#att-count').innerHTML = attemptsLabel(jj.attempts); }
+  h += cardHtml(d.card);
   if (d.woNote && d.woNote.note) h += '<div class="sec"><h3>Dispatch note</h3><div class="card pre">' + linkify(d.woNote.note) + '</div></div>';
   if (d.schedNotes && d.schedNotes.length) h += '<div class="sec"><h3>Scheduling</h3><div class="card feed">' +
     d.schedNotes.map(s => '<div class="item"><div class="h">' + esc(s.from || '') + '</div>' + esc(s.line) + '</div>').join('') + '</div></div>';
@@ -462,6 +463,34 @@ function detailsHtml(d) {
   h += '<div class="sec"><h3>Emails</h3><div id="emails">' + (d.emails ? emailsHtml(d.emails) :
        '<button class="act" style="width:100%" onclick="loadEmails(\'' + d.cni + '\')">Load emails about this ticket</button>') + '</div></div>';
   return h;
+}
+// The full tech email the drafts script sent (sandboxed: no scripts, no links back into the app)
+let lastCard = null;
+function cardHtml(c) {
+  lastCard = c;
+  if (!c) return '<div class="sec"><h3>Dispatch email</h3><div class="small" style="margin:0 4px">Not found — sent before it was saved, or from another Google account.</div></div>';
+  if (c.error) return '<div class="sec"><h3>Dispatch email</h3><div class="small" style="margin:0 4px">' + esc(c.error) + '</div></div>';
+  const when = c.sent ? new Date(c.sent).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return '<div class="sec"><h3>Dispatch email <span style="text-transform:none;letter-spacing:0">· ' + esc(when) + (c.to ? ' · to ' + esc(c.to) : '') + '</span></h3>' +
+    '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div class="small" style="padding:8px 12px;border-bottom:1px solid var(--line)">' + esc(c.subject || '') +
+        (c.html ? ' · <a href="#" onclick="event.preventDefault();toggleCardView()" id="card-toggle">Show as text</a>' : '') + '</div>' +
+      '<div id="card-view">' + cardBody(!!c.html) + '</div>' +
+    '</div></div>';
+}
+function cardBody(formatted) {
+  const c = lastCard;
+  if (formatted && c.html) {
+    return '<iframe sandbox="" referrerpolicy="no-referrer" style="width:100%;height:520px;border:0;background:#fff;display:block" srcdoc="' +
+      esc(c.html) + '"></iframe>';
+  }
+  return '<div class="pre" style="padding:12px;max-height:520px;overflow:auto">' + linkify(c.text || '') + '</div>';
+}
+function toggleCardView() {
+  const v = $('#card-view'), t = $('#card-toggle');
+  const toText = t.textContent === 'Show as text';
+  v.innerHTML = cardBody(!toText);
+  t.textContent = toText ? 'Show formatted' : 'Show as text';
 }
 function emailsHtml(list) {
   return list.length ? list.map(m => '<div class="card"><div class="small">' + esc(m.date) + ' · ' + esc(m.from) + '</div><div class="co" style="font-size:14px">' + esc(m.subject) + '</div><div class="pre small" style="margin-top:4px">' + esc(m.text) + '</div></div>').join('')
@@ -567,9 +596,11 @@ function renderParts() {
   if (parts === null) return;
   const waiting = parts.filter(p => p.fedex && p.fedex.held && !p.fedex.delivered).length;
   $('#parts-badge').innerHTML = waiting ? '<span class="badge">' + waiting + '</span>' : '';
-  if (!parts.length) { el.innerHTML = '<div class="empty">No parts waiting</div>'; return; }
+  if (!parts.length) { el.innerHTML = '<div class="empty">No parts on the map</div>'; return; }
   const admin = session.user.admin && techFilter === 'ALL';
-  el.innerHTML = parts.map(p => {
+  const done = p => (p.fedex && p.fedex.delivered && p.fedex.ours) || p.markedPickedUp;
+  const open = parts.filter(p => !done(p)), gone = parts.filter(done);
+  const card = p => {
     const f = p.fedex;
     const st = !f ? '<span class="chip">No FedEx status</span>'
       : f.delivered && f.ours ? '<span class="chip green">Picked up' + (f.receivedBy ? ' by ' + esc(f.receivedBy) : '') + '</span>'
@@ -586,8 +617,12 @@ function renderParts() {
         (p.markedPickedUp ? '<span class="act" style="opacity:.6">✓ Marked</span>'
           : '<button class="act" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>') +
       '</div></div>';
-  }).join('');
+  };
+  el.innerHTML = (open.length ? '<div class="group">To pick up · ' + open.length + '</div>' + open.map(card).join('') : '<div class="empty">Nothing waiting to be picked up</div>') +
+    (gone.length ? '<div class="group" style="cursor:pointer" onclick="partsShowDone=!partsShowDone;renderParts()">' + (partsShowDone ? '▾' : '▸') +
+      ' Picked up · ' + gone.length + '</div>' + (partsShowDone ? gone.map(card).join('') : '') : '');
 }
+let partsShowDone = false;
 async function pickedUp(tracking, cni, btn) {
   if (!confirm('Mark part ' + tracking + ' as picked up?')) return;
   btn.disabled = true;
