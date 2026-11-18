@@ -2,806 +2,588 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Rewind Repair — Active Pins</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12121a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rewind">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Rewind Jobs</title>
 <style>
   :root {
-    --bg:       #0f0f14;
-    --card:     #15151f;
-    --header:   #1a1a2e;
-    --border:   #2a2a40;
-    --border2:  #1e1e2e;
-    --text:     #fff;
-    --subtext:  #888;
-    --dimtext:  #555;
-    --filterBg: #1a1a2e;
-    --mapBg:    #1a1a2e;
+    --bg: #12121a; --panel: #1a1a26; --panel2: #222232; --line: #2c2c40;
+    --text: #f2f2f6; --sub: #a0a0b4; --dim: #6c6c82;
+    --accent: #d8a86a; --green: #4fb37f; --blue: #6aa4e0; --red: #e06a6a; --amber: #e8a83a;
+    --radius: 12px; color-scheme: dark;
   }
-  body.light {
-    --bg:       #f0f0eb;
-    --card:     #fafaf8;
-    --header:   #ffffff;
-    --border:   #d8d8d0;
-    --border2:  #e8e8e2;
-    --text:     #1a1a1a;
-    --subtext:  #666;
-    --dimtext:  #aaa;
-    --filterBg: #ffffff;
-    --mapBg:    #e8e8e0;
+  :root[data-theme="light"] {
+    --bg: #f3f2ee; --panel: #ffffff; --panel2: #f0efea; --line: #dddcd4;
+    --text: #1b1b22; --sub: #5d5d6b; --dim: #9a9aa6;
+    --accent: #a8742e; --green: #23875a; --blue: #2f6db0; --red: #c03f3f; --amber: #b0761a; color-scheme: light;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100dvh; display: flex; flex-direction: column; transition: background .2s, color .2s; }
+  html, body { height: 100%; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+         display: flex; flex-direction: column; -webkit-tap-highlight-color: transparent; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  a { color: var(--blue); }
+  .hidden { display: none !important; }
 
-  /* ── Login overlay ── */
-  #login-overlay {
-    position: fixed; inset: 0; z-index: 9999;
-    background: #0f0f14; display: flex; align-items: center; justify-content: center;
-  }
-  #login-box {
-    background: #1a1a2e; border: 2px solid #4a90d9; border-radius: 14px;
-    padding: 32px 36px; width: 300px; text-align: center; font-family: system-ui, sans-serif;
-  }
-  #login-box h2 { font-size: 16px; color: #fff; margin-bottom: 6px; }
-  #login-box p  { font-size: 12px; color: #888; margin-bottom: 20px; }
-  #login-pin    { width: 100%; padding: 10px; font-size: 18px; letter-spacing: .3em;
-                  text-align: center; background: #111; color: #fff; border: 1px solid #444;
-                  border-radius: 8px; margin-bottom: 12px; outline: none; }
-  #login-btn    { width: 100%; padding: 10px; background: #4a90d9; color: #fff; border: none;
-                  border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
-  #login-err    { color: #f99; font-size: 12px; margin-top: 8px; min-height: 16px; }
+  /* Top bar */
+  header { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+           background: var(--panel); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  header .brand { font-weight: 800; letter-spacing: .02em; }
+  header .who { font-size: 12px; color: var(--sub); }
+  header .grow { flex: 1; min-width: 0; }
+  header select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; max-width: 46vw; }
+  .icon-btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 14px; line-height: 1; }
+  #stamp { font-size: 11px; color: var(--dim); padding: 4px 16px; background: var(--bg); flex-shrink: 0; }
+  #stamp.offline { color: var(--amber); }
 
-  /* ── Header ── */
-  .header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 16px; background: var(--header); border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+  /* Views */
+  main { flex: 1; min-height: 0; position: relative; }
+  .view { position: absolute; inset: 0; overflow-y: auto; padding: 8px 12px 16px; }
+  #view-map { padding: 0; overflow: hidden; }
+  #map { width: 100%; height: 100%; background: var(--panel2); }
+  @media (min-width: 900px) {
+    main.split #view-jobs, main.split #view-today { right: 50%; }
+    main.split #view-map { left: 50%; display: block !important; border-left: 1px solid var(--line); }
   }
-  .header-left  { display: flex; flex-direction: column; }
-  .header h1    { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
-  .header-user  { font-size: 11px; color: var(--subtext); margin-top: 2px; }
-  .header-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .legend { display: flex; gap: 14px; align-items: center; }
-  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--subtext); }
-  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .dot-wo  { background: #4a9d6f; }
-  .dot-fdx { background: #e8a020; }
-  .dot-done { background: #555; }
-  .btn-refresh {
-    background: var(--filterBg); border: 1px solid var(--border); color: var(--subtext);
-    padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: background .15s;
-  }
-  .btn-refresh:hover { background: var(--border); color: var(--text); }
 
-  /* ── Filter bar ── */
-  .filters {
-    display: flex; gap: 8px; padding: 8px 16px;
-    background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
-  }
-  .filter-btn {
-    padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
-    border: 1px solid var(--border); background: var(--filterBg); color: var(--subtext); cursor: pointer; transition: all .15s;
-  }
-  .filter-btn.active         { background: #2a3a2a; border-color: #4a9d6f; color: #4a9d6f; }
-  .filter-btn.active.fdx     { background: #3a2a10; border-color: #e8a020; color: #e8a020; }
-  .filter-btn.active.andrei  { background: #1a2a3a; border-color: #6a9fd8; color: #6a9fd8; }
-  .filter-btn.active.jiho    { background: #2a1a3a; border-color: #b08ad8; color: #b08ad8; }
-  .filter-btn.active.done    { background: #2a2a2a; border-color: #777; color: #aaa; }
+  /* Bottom tabs */
+  nav { display: flex; background: var(--panel); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); flex-shrink: 0; }
+  nav button { flex: 1; background: none; border: none; padding: 9px 4px 8px; font-size: 11px; color: var(--sub); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  nav button b { font-size: 19px; line-height: 1; font-weight: 400; }
+  nav button.on { color: var(--accent); }
+  nav .badge { background: var(--red); color: #fff; border-radius: 9px; font-size: 10px; padding: 0 5px; margin-left: 3px; }
 
-  /* ── Main layout ── */
-  .main { display: flex; flex: 1; overflow: hidden; }
-  #map  { flex: 1; }
+  /* Lists */
+  .group { font-size: 12px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: .07em; margin: 14px 4px 6px; }
+  .group:first-child { margin-top: 6px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; }
+  .job { cursor: pointer; }
+  .job:active { background: var(--panel2); }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .between { justify-content: space-between; }
+  .co { font-weight: 700; }
+  .meta { font-size: 13px; color: var(--sub); }
+  .small { font-size: 12px; color: var(--dim); }
+  .chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--panel2); color: var(--sub); white-space: nowrap; }
+  .chip.green { color: var(--green); } .chip.amber { color: var(--amber); } .chip.red { color: var(--red); } .chip.blue { color: var(--blue); }
+  .empty { text-align: center; color: var(--dim); padding: 40px 16px; }
+  .search { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; margin: 4px 0 6px; }
 
-  /* ── Sidebar ── */
-  .sidebar {
-    width: 300px; flex-shrink: 0; background: var(--card);
-    border-left: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column;
-  }
-  .sidebar-header {
-    padding: 10px 14px; font-size: 11px; font-weight: 700;
-    color: var(--dimtext); text-transform: uppercase; letter-spacing: .08em;
-    border-bottom: 1px solid var(--border); flex-shrink: 0;
-  }
-  .pin-card {
-    padding: 12px 14px; border-bottom: 1px solid var(--border2); cursor: pointer; transition: background .1s;
-  }
-  .pin-card:hover { background: var(--border2); }
-  .pin-card.selected     { background: #1e2a1e; border-left: 3px solid #4a9d6f; }
-  .pin-card.selected.fdx { background: #2a1e0e; border-left-color: #e8a020; }
-  .pin-card.selected.done { background: #222; border-left-color: #777; }
-  .pin-type { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .08em;
-    text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-bottom: 5px; }
-  .pin-type.wo   { background: #1a3a2a; color: #4a9d6f; }
-  .pin-type.fdx  { background: #3a2a10; color: #e8a020; }
-  .pin-type.done { background: #2a2a2a; color: #777; }
-  .pin-tech { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .06em;
-    text-transform: uppercase; padding: 2px 6px; border-radius: 3px; margin-left: 4px; margin-bottom: 5px; }
-  .pin-tech.andrei { background: #1a2a3a; color: #6a9fd8; }
-  .pin-tech.jiho   { background: #2a1a3a; color: #b08ad8; }
-  .pin-address { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.3; margin-bottom: 4px; }
-  .pin-note    { font-size: 11px; color: var(--subtext); line-height: 1.4; white-space: pre-wrap; }
-  .pin-cni     { font-size: 10px; color: var(--dimtext); margin-top: 4px; }
-  .pin-date    { font-size: 10px; color: var(--dimtext); margin-top: 2px; }
-  .btn-complete {
-    margin-top: 8px; padding: 3px 10px; font-size: 10px; font-weight: 700;
-    border-radius: 4px; border: 1px solid #4a9d6f; background: transparent;
-    color: #4a9d6f; cursor: pointer; transition: background .15s;
-  }
-  .btn-complete:hover { background: #1a3a2a; }
-  .btn-complete.done-btn { border-color: #777; color: #777; }
-  .btn-complete.done-btn:hover { background: #2a2a2a; }
+  /* Sheets (details, closure) */
+  .sheet { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; }
+  .sheet-head { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .sheet-head .t { flex: 1; font-weight: 800; }
+  .sheet-body { flex: 1; overflow-y: auto; padding: 12px 12px calc(24px + env(safe-area-inset-bottom)); }
+  .sec { margin-top: 14px; }
+  .sec h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); margin: 0 4px 6px; }
+  .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .act { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 6px; text-align: center; font-size: 13px; font-weight: 600; text-decoration: none; color: var(--text); }
+  .act:active { background: var(--panel2); }
+  .act.primary { background: var(--accent); color: #1b1408; border-color: var(--accent); }
+  .act.wide { grid-column: span 3; padding: 13px; font-size: 15px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv dt { color: var(--dim); } .kv dd { word-break: break-word; }
+  .pre { white-space: pre-wrap; font-size: 13px; }
+  .feed .item { border-left: 2px solid var(--line); padding: 2px 0 8px 10px; }
+  .feed .item .h { font-size: 12px; color: var(--dim); }
+  .feed .item.hem { border-left-color: var(--amber); }
 
-  .empty-state { padding: 32px 16px; text-align: center; color: var(--dimtext); font-size: 12px; line-height: 1.6; }
-  .loading     { padding: 32px 16px; text-align: center; color: var(--dimtext); font-size: 12px; }
+  /* Forms */
+  label.f { display: block; margin-bottom: 12px; }
+  label.f span { display: block; font-size: 13px; color: var(--sub); margin-bottom: 4px; }
+  label.f span i { color: var(--red); font-style: normal; }
+  input.in, select.in, textarea.in { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+  textarea.in { min-height: 90px; resize: vertical; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { border: 1px solid var(--line); background: var(--panel); border-radius: 9px; padding: 8px 12px; font-size: 14px; }
+  .seg button.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
 
-  @media (max-width: 640px) {
-    .main { flex-direction: column; }
-    .sidebar { width: 100%; height: 240px; border-left: none; border-top: 1px solid var(--border); }
-    #map { flex: 1; min-height: 0; }
-  }
+  /* Login */
+  #login { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  #login .box { width: 100%; max-width: 320px; text-align: center; }
+  #login h1 { font-size: 22px; margin-bottom: 4px; }
+  #login p { color: var(--sub); font-size: 14px; margin-bottom: 20px; }
+  #code { width: 100%; text-align: center; font-size: 26px; letter-spacing: .35em; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  #login .err { color: var(--red); min-height: 20px; margin-top: 10px; font-size: 14px; }
+
+  /* Toast */
+  #toast { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 200;
+           background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: 90vw; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s .8s linear infinite; vertical-align: -2px; }
+  @keyframes s { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 
-<!-- Login overlay -->
-<div id="login-overlay">
-  <div id="login-box">
-    <h2>Rewind Repair</h2>
-    <p>Enter your PIN to continue</p>
-    <input type="password" id="login-pin" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
-    <button id="login-btn" onclick="doLogin()">Sign In</button>
-    <div id="login-err"></div>
+<div id="login">
+  <div class="box">
+    <h1>Rewind Repair</h1>
+    <p>Enter your 6-digit code</p>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="••••••">
+    <button class="act primary wide" style="width:100%;margin-top:12px" onclick="login()">Sign in</button>
+    <div class="err" id="login-err"></div>
   </div>
 </div>
 
-<div class="header">
-  <div class="header-left">
-    <div class="header h1">Rewind Repair — Active Pins</div>
-    <div class="header-user" id="user-label">Not signed in</div>
-    <div class="sub" id="last-updated">Loading…</div>
+<header>
+  <div class="grow">
+    <div class="brand">Rewind Jobs</div>
+    <div class="who" id="who"></div>
   </div>
-  <div class="header-right">
-    <div class="legend">
-      <div class="legend-item"><div class="dot dot-wo"></div>Workorder</div>
-      <div class="legend-item"><div class="dot dot-fdx"></div>FedEx</div>
-      <div class="legend-item"><div class="dot dot-done"></div>Completed</div>
-    </div>
-    <button class="btn-refresh" onclick="toggleTheme()" id="btn-theme">☀ Light</button>
-    <button class="btn-refresh" onclick="loadPins()">↺ Refresh</button>
-    <button class="btn-refresh" id="btn-track" onclick="checkAllTracking()" style="background:#3a2a10;border-color:#e8a020;color:#e8a020;">📦 Check Status</button>
-    <button class="btn-refresh" id="btn-auth" onclick="startSheetsOAuth()" style="border-color:#e8a020;color:#e8a020;">🔑 Authorize Sheet</button>
-    <button class="btn-refresh" onclick="doLogout()" style="border-color:#c62828;color:#c62828;">Sign Out</button>
-  </div>
-  <div>
-    <div class="header h1">Rewind Repair — Active Pins</div>
-    <div class="sub" id="last-updated">Loading…</div>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px;">
-    <div class="legend">
-      <div class="legend-item"><div class="dot dot-wo"></div>Workorder</div>
-      <div class="legend-item"><div class="dot dot-fdx"></div>FedEx</div>
-    </div>
-    <button class="btn-refresh" onclick="loadPins()">↺ Refresh</button>
-    <button class="btn-refresh" id="btn-track" onclick="checkAllTracking()" style="background:#3a2a10;border-color:#e8a020;color:#e8a020;">📦 Check Status</button>
-  </div>
-</div>
+  <select id="tech-pick" class="hidden" onchange="pickTech(this.value)"></select>
+  <button class="icon-btn" onclick="refresh(true)" title="Refresh">↻</button>
+  <button class="icon-btn" onclick="toggleTheme()" title="Light / dark" id="theme-btn">◐</button>
+  <button class="icon-btn" onclick="if(confirm('Sign out?'))logout()" title="Sign out" style="font-size:12px">Sign out</button>
+</header>
+<div id="stamp"></div>
 
-<div class="filters" id="filter-bar">
-  <button class="filter-btn active" id="f-all"    onclick="setFilter('all')">All</button>
-  <button class="filter-btn"        id="f-wo"     onclick="setFilter('wo')">Workorders</button>
-  <button class="filter-btn fdx"    id="f-fdx"    onclick="setFilter('fdx')">FedEx</button>
-  <button class="filter-btn andrei" id="f-andrei" onclick="setFilter('andrei')">Andrei</button>
-  <button class="filter-btn jiho"   id="f-jiho"   onclick="setFilter('jiho')">Jiho</button>
-  <button class="filter-btn done"   id="f-done"   onclick="setFilter('done')">Completed</button>
-</div>
+<main id="main" class="split">
+  <section class="view" id="view-today"></section>
+  <section class="view hidden" id="view-jobs"></section>
+  <section class="view hidden" id="view-map"><div id="map"></div></section>
+  <section class="view hidden" id="view-parts"></section>
+</main>
 
-<div class="main">
-  <div id="map"></div>
-  <div class="sidebar">
-    <div class="sidebar-header">Pins</div>
-    <div id="pin-list"><div class="loading">Loading pins…</div></div>
-  </div>
-</div>
+<nav>
+  <button data-v="today" class="on" onclick="show('today')"><b>◷</b>Today</button>
+  <button data-v="jobs" onclick="show('jobs')"><b>☰</b>Jobs</button>
+  <button data-v="map" onclick="show('map')"><b>⌖</b>Map</button>
+  <button data-v="parts" onclick="show('parts')"><b>▣</b><span>Parts<span id="parts-badge"></span></span></button>
+</nav>
+
+<div id="toast"></div>
 
 <script>
-  // ── Config ──────────────────────────────────────────────────────────────
-  const SHEET_ID    = '123m2F6uAQ2xWXQLrP-KKiU7LFyS-_5IeanWi9aRYSlA';
-  const PINS_TAB    = 'Active Pins';
-  const DONE_TAB    = 'Completed Pins';
-  const SHEETS_KEY  = 'AIzaSyCTvNZrwA_E8uG3nUsM8ihdYMFBwsUm27k';
-  const FEDEX_PROXY   = 'https://script.google.com/macros/s/AKfycbzeBVsn4MjaAzy_luDWWkrcB_Ixtb9tJapDqrfqbY901nBZjOdcndRKger5152l45W7nw/exec';
-  const OAUTH_CLIENT  = '980502842865-jib81s32l4hlr5sncbhbfpp4so20jlu1.apps.googleusercontent.com';
-  const OAUTH_REDIRECT = 'https://rewind-repair.github.io/rewind-map/auth.html';
-  const OAUTH_SCOPE   = 'https://www.googleapis.com/auth/spreadsheets';
+// ── Config ────────────────────────────────────────────────────────────────
+// Nord Claude's relay (Apps Script web app). Codes are checked there, never in this page.
+const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
+const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
+const AUTO_REFRESH_MIN = 5;
 
-  const PINS = {
-    andrei: { pin: '3784', label: 'Andrei', admin: false },
-    jiho:   { pin: '6767', label: 'Jiho',   admin: true  },
-  };
+// ── Small helpers ─────────────────────────────────────────────────────────
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
+function toast(msg, ms) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), ms || 2600);
+}
+const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const addDays = (iso, n) => { const d = new Date(iso + 'T12:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const nice = iso => new Date(iso + 'T12:00').toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
+const phonesIn = t => [...new Set((String(t || '').match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g) || []).map(p => p.trim()))];
+const navUrl = j => j.lat ? 'https://www.google.com/maps/dir/?api=1&destination=' + j.lat + ',' + j.lng
+                          : 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(j.address || j.loc || j.city);
 
-  // ── Auth state ────────────────────────────────────────────────────────────
-  let currentUser = null; // 'andrei' | 'jiho'
-  let isAdmin     = false;
+// ── API ───────────────────────────────────────────────────────────────────
+let session = store.get('rw_session', null);   // { pin, user, techs }
+async function api(op, extra) {
+  const res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action: 'app', op, pin: session && session.pin }, extra || {})) });
+  const j = await res.json();
+  if (j.auth) { logout(); throw new Error(j.error || 'Signed out'); }
+  if (!j.ok) throw new Error(j.error || 'Something went wrong');
+  return j;
+}
 
-  // ── Sheets OAuth ────────────────────────────────────────────────────────
-  function getSheetsToken() {
-    // Check sessionStorage first
-    const stored = sessionStorage.getItem('rw_sheets_token');
-    if (stored) {
-      try {
-        const { token, expires } = JSON.parse(stored);
-        if (Date.now() < expires - 60000) { sheetsToken = token; return token; }
-      } catch {}
-    }
-    return null;
+// ── Login ─────────────────────────────────────────────────────────────────
+async function login() {
+  const pin = $('#code').value.trim();
+  if (!pin) return;
+  $('#login-err').innerHTML = '<span class="spin"></span>';
+  session = { pin };
+  try {
+    const j = await api('login');
+    session = { pin, user: j.user, techs: j.techs || [] };
+    store.set('rw_session', session);
+    start();
+  } catch (e) { session = null; $('#login-err').textContent = e.message; }
+}
+function logout() {
+  store.del('rw_session'); session = null;
+  $('#login').classList.remove('hidden'); $('#code').value = '';
+}
+$('#code').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+
+// ── State ─────────────────────────────────────────────────────────────────
+let jobs = [], parts = null, view = 'today', techFilter = 'ALL', search = '';
+let lastAt = null, offline = false;
+
+function start() {
+  $('#login').classList.add('hidden');
+  const u = session.user;
+  $('#who').textContent = u.name + (u.admin ? ' · admin' : '');
+  const sel = $('#tech-pick');
+  if (u.admin) {
+    techFilter = store.get('rw_tech', 'ALL');
+    sel.innerHTML = '<option value="ALL">All techs</option>' + session.techs.map(t =>
+      '<option value="' + esc(t.tech) + '">' + esc(t.name) + (t.area ? ' · ' + esc(t.area) : '') + '</option>').join('');
+    sel.value = techFilter; sel.classList.remove('hidden');
+  } else sel.classList.add('hidden');
+  const cached = store.get('rw_jobs_' + u.name + '_' + techFilter, null);
+  if (cached) { jobs = cached.jobs; lastAt = cached.at; render(); }
+  refresh();
+  clearInterval(start.t); start.t = setInterval(() => { if (!document.hidden) refresh(); }, AUTO_REFRESH_MIN * 60e3);
+}
+function pickTech(t) { techFilter = t; store.set('rw_tech', t); parts = null; refresh(true); }
+
+async function refresh(loud) {
+  if (!session) return;
+  stamp('<span class="spin"></span> Updating…');
+  try {
+    const j = await api('jobs', { tech: techFilter });
+    jobs = j.jobs; lastAt = j.at; offline = false;
+    store.set('rw_jobs_' + session.user.name + '_' + techFilter, { jobs, at: lastAt });
+    render();
+    if (view === 'parts' || parts === null) loadParts();
+    if (loud) toast('Up to date');
+  } catch (e) {
+    offline = !navigator.onLine || /fetch|network/i.test(e.message);
+    render();
+    if (!offline) toast(e.message, 4000);
   }
+}
+function stamp(html) {
+  const s = $('#stamp');
+  if (html) { s.innerHTML = html; s.className = ''; return; }
+  const when = lastAt ? new Date(lastAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'never';
+  s.className = offline ? 'offline' : '';
+  s.textContent = (offline ? 'Offline — showing jobs from ' : 'Updated ') + when + ' · ' + jobs.length + ' open job' + (jobs.length === 1 ? '' : 's');
+}
 
-  function startSheetsOAuth() {
-    const params = new URLSearchParams({
-      client_id:     OAUTH_CLIENT,
-      redirect_uri:  OAUTH_REDIRECT,
-      response_type: 'token',
-      scope:         OAUTH_SCOPE,
-      include_granted_scopes: 'true',
-    });
-    const popup = window.open(
-      'https://accounts.google.com/o/oauth2/v2/auth?' + params,
-      'rw_sheets_oauth', 'width=500,height=600'
-    );
-    // Poll popup for token in URL hash
-    const timer = setInterval(() => {
-      try {
-        if (!popup || popup.closed) { clearInterval(timer); return; }
-        const url = popup.location.href;
-        if (url.includes('access_token')) {
-          clearInterval(timer);
-          const fragment = url.includes('#') ? url.split('#')[1] : url.split('?')[1];
-          const hash = new URLSearchParams(fragment);
-          const token   = hash.get('access_token');
-          const expires = Date.now() + parseInt(hash.get('expires_in') ?? '3600') * 1000;
-          if (token) {
-            sheetsToken = token;
-            sessionStorage.setItem('rw_sheets_token', JSON.stringify({ token, expires }));
-            updateAuthButton();
-            console.log('[RW Map] Sheets OAuth token received');
-          }
-          popup.close();
-        }
-      } catch(e) {} // cross-origin errors until redirect completes
-    }, 500);
-  }
+// ── Views ─────────────────────────────────────────────────────────────────
+function show(v) {
+  view = v;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  ['today', 'jobs', 'map', 'parts'].forEach(x => $('#view-' + x).classList.toggle('hidden', x !== v));
+  $('#main').classList.toggle('split', v === 'today' || v === 'jobs');
+  if (v === 'map' || (window.innerWidth >= 900 && (v === 'today' || v === 'jobs'))) { $('#view-map').classList.remove('hidden'); ensureMap(); }
+  if (v === 'parts' && parts === null) loadParts();
+}
+function render() {
+  stamp();
+  renderToday(); renderJobs(); renderMap(); renderParts();
+}
 
-  // No-op — token is handled by the popup poller above
-  function checkOAuthCallback() {
-    // Check if we were redirected back with a token (fallback for browsers that block popups)
-    const hash = window.location.hash;
-    if (!hash.includes('access_token')) return;
-    const params = new URLSearchParams(hash.slice(1));
-    const token   = params.get('access_token');
-    const expires = Date.now() + parseInt(params.get('expires_in') ?? '3600') * 1000;
-    if (token) {
-      sheetsToken = token;
-      sessionStorage.setItem('rw_sheets_token', JSON.stringify({ token, expires }));
-      history.replaceState(null, '', window.location.pathname);
-      updateAuthButton();
-    }
-  }
-
-  function updateAuthButton() {
-    const btn = document.getElementById('btn-auth');
-    if (!btn) return;
-    if (sheetsToken) {
-      btn.textContent = '✓ Sheet Access';
-      btn.style.borderColor = '#4a9d6f';
-      btn.style.color = '#4a9d6f';
-    } else {
-      btn.textContent = '🔑 Authorize Sheet';
-      btn.style.borderColor = '#e8a020';
-      btn.style.color = '#e8a020';
-    }
-  }
-
-  async function sheetsRequest(method, path, body) {
-    if (!sheetsToken) throw new Error('Not authorized — click Authorize Sheet first');
-    const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + path, {
-      method,
-      headers: {
-        'Authorization': 'Bearer ' + sheetsToken,
-        'Content-Type': 'application/json',
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (res.status === 401) {
-      sheetsToken = null;
-      sessionStorage.removeItem('rw_sheets_token');
-      updateAuthButton();
-      throw new Error('Token expired — please re-authorize');
-    }
-    return res.json();
-  }
-
-  function doLogin() {
-    const entered = document.getElementById('login-pin').value.trim();
-    const match   = Object.entries(PINS).find(([, v]) => v.pin === entered);
-    if (!match) {
-      document.getElementById('login-err').textContent = 'Incorrect PIN';
-      document.getElementById('login-pin').value = '';
-      return;
-    }
-    currentUser = match[0];
-    isAdmin     = match[1].admin;
-    sessionStorage.setItem('rw_user', currentUser);
-    document.getElementById('login-overlay').style.display = 'none';
-    // Restore any existing sheets token
-    getSheetsToken();
-    updateAuthButton();
-    document.getElementById('user-label').textContent = match[1].label + (isAdmin ? ' · Admin' : '');
-
-    // Hide tech filter buttons if not admin
-    if (!isAdmin) {
-      document.getElementById('f-andrei').style.display = 'none';
-      document.getElementById('f-jiho').style.display   = 'none';
-    }
-    loadPins();
-    startGPS();
-  }
-
-  function doLogout() {
-    sessionStorage.removeItem('rw_user');
-    currentUser = null; isAdmin = false;
-    document.getElementById('login-overlay').style.display = 'flex';
-    document.getElementById('login-pin').value = '';
-    document.getElementById('login-err').textContent = '';
-    stopGPS();
-  }
-
-  // Restore session on reload
-  window.addEventListener('load', () => {
-    document.getElementById('login-pin').addEventListener('keydown', e => {
-      if (e.key === 'Enter') doLogin();
-    });
-    checkOAuthCallback();
-    const saved = sessionStorage.getItem('rw_user');
-    if (saved && PINS[saved]) {
-      document.getElementById('login-pin').value = PINS[saved].pin;
-      doLogin();
-    }
+function apptChip(j) {
+  if (!j.appt) return '<span class="chip">Not scheduled</span>';
+  const t = todayISO(), d = j.appt.date;
+  const cls = d < t ? 'red' : d === t ? 'green' : 'blue';
+  return '<span class="chip ' + cls + '">' + (d === t ? 'Today' : d === addDays(t, 1) ? 'Tomorrow' : nice(d)) + (j.appt.time ? ' · ' + esc(j.appt.time) : '') + '</span>';
+}
+function jobCard(j) {
+  const admin = session.user.admin && techFilter === 'ALL';
+  return '<div class="card job" onclick="openJob(\'' + j.cni + '\')">' +
+    '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span>' + apptChip(j) + '</div>' +
+    '<div class="meta">' + esc([j.address || j.city, j.device].filter(Boolean).join(' · ')) + '</div>' +
+    '<div class="row small" style="margin-top:4px;flex-wrap:wrap">CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
+      (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex ? ' · 📦' : '') + '</div>' +
+    (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
+  '</div>';
+}
+function renderToday() {
+  const el = $('#view-today');
+  if (!jobs.length) { el.innerHTML = '<div class="empty">No open jobs 🎉</div>'; return; }
+  const t = todayISO(), groups = { over: [], today: [], tomorrow: [], week: [], later: [], none: [] };
+  jobs.forEach(j => {
+    const d = j.appt && j.appt.date;
+    if (!d) groups.none.push(j);
+    else if (d < t) groups.over.push(j);
+    else if (d === t) groups.today.push(j);
+    else if (d === addDays(t, 1)) groups.tomorrow.push(j);
+    else if (d <= addDays(t, 7)) groups.week.push(j);
+    else groups.later.push(j);
   });
+  const byDate = (a, b) => (a.appt ? a.appt.date + (a.appt.time || '') : '9') < (b.appt ? b.appt.date + (b.appt.time || '') : '9') ? -1 : 1;
+  const sec = (title, list) => list.length ? '<div class="group">' + title + ' · ' + list.length + '</div>' + list.sort(byDate).map(jobCard).join('') : '';
+  el.innerHTML = sec('Today', groups.today) + sec('Past date — reschedule or close', groups.over) + sec('Tomorrow', groups.tomorrow) +
+                 sec('Next 7 days', groups.week) + sec('Later', groups.later) + sec('Not scheduled yet', groups.none);
+}
+function renderJobs() {
+  const el = $('#view-jobs');
+  const q = search.toLowerCase();
+  const list = jobs.filter(j => !q || [j.cni, j.wo, j.company, j.customer, j.address, j.city, j.device, j.tech].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => (a.city || '').localeCompare(b.city || '') || (a.company || '').localeCompare(b.company || ''));
+  el.innerHTML = '<input class="search" placeholder="Search CNI, WO, company, city…" value="' + esc(search) + '" oninput="search=this.value;renderJobsList()">' +
+                 '<div id="jobs-list"></div>';
+  renderJobsList();
+}
+function renderJobsList() {
+  const q = search.toLowerCase();
+  const list = jobs.filter(j => !q || [j.cni, j.wo, j.company, j.customer, j.address, j.city, j.device, j.tech].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => (a.city || '').localeCompare(b.city || '') || (a.company || '').localeCompare(b.company || ''));
+  const box = $('#jobs-list');
+  if (box) box.innerHTML = list.length ? list.map(jobCard).join('') : '<div class="empty">Nothing matches</div>';
+}
 
-  // ── Theme ─────────────────────────────────────────────────────────────────
-  let darkMode = true;
-  function toggleTheme() {
-    darkMode = !darkMode;
-    document.body.classList.toggle('light', !darkMode);
-    document.getElementById('btn-theme').textContent = darkMode ? '☀ Light' : '🌙 Dark';
-    if (map) map.setOptions({ styles: darkMode ? darkMapStyles() : [] });
-  }
-
-  // ── Map + state ───────────────────────────────────────────────────────────
-  const COLORS = {
-    wo:   { fill: '#4a9d6f', stroke: '#2a6a4a' },
-    fdx:  { fill: '#e8a020', stroke: '#b06010' },
-    done: { fill: '#555555', stroke: '#333333' },
+// ── Map ───────────────────────────────────────────────────────────────────
+let map = null, markers = [], mapLoading = false, myDot = null;
+const TECH_HUES = ['#6aa4e0', '#4fb37f', '#e8a83a', '#c27ae0', '#e06a6a', '#3ac2c2', '#d8d86a', '#e07ab4', '#8a8ae0', '#a0c25a', '#e0956a', '#5ab4e0', '#b4a07a'];
+function ensureMap() {
+  if (map || mapLoading) return;
+  mapLoading = true;
+  window.initMap = () => {
+    map = new google.maps.Map($('#map'), { center: { lat: 39.5, lng: -98.35 }, zoom: 4, streetViewControl: false, mapTypeControl: false,
+      fullscreenControl: false, clickableIcons: false, styles: document.documentElement.dataset.theme === 'light' ? [] : DARK });
+    renderMap();
+    if (navigator.geolocation) navigator.geolocation.watchPosition(p => {
+      const pos = { lat: p.coords.latitude, lng: p.coords.longitude };
+      if (!myDot) myDot = new google.maps.Marker({ position: pos, map, zIndex: 999, title: 'You',
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#4a8ff0', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 } });
+      else myDot.setPosition(pos);
+    }, () => {}, { enableHighAccuracy: true, maximumAge: 30000 });
   };
-  const TECH_COLORS = { andrei: '#6a9fd8', jiho: '#b08ad8' };
+  const s = document.createElement('script');
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + MAPS_KEY + '&callback=initMap';
+  s.async = true; s.onerror = () => { $('#map').innerHTML = '<div class="empty">Map could not load (offline?)</div>'; mapLoading = false; };
+  document.head.appendChild(s);
+}
+function renderMap() {
+  if (!map) return;
+  markers.forEach(m => m.setMap(null)); markers = [];
+  const techs = [...new Set(jobs.map(j => j.tech))].sort();
+  const t = todayISO();
+  const bounds = new google.maps.LatLngBounds();
+  jobs.filter(j => j.lat).forEach(j => {
+    const color = session.user.admin && techFilter === 'ALL' ? TECH_HUES[techs.indexOf(j.tech) % TECH_HUES.length]
+      : !j.appt ? '#8a8aa0' : j.appt.date < t ? '#e06a6a' : j.appt.date === t ? '#4fb37f' : '#6aa4e0';
+    const m = new google.maps.Marker({ position: { lat: j.lat, lng: j.lng }, map, title: (j.company || j.cni) + ' · ' + j.cni,
+      label: session.user.admin && techFilter === 'ALL' ? { text: j.tech, color: '#111', fontSize: '10px', fontWeight: '700' } : null,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: session.user.admin && techFilter === 'ALL' ? 13 : 10, fillColor: color, fillOpacity: .95, strokeColor: '#111', strokeWeight: 1.5 } });
+    m.addListener('click', () => openJob(j.cni));
+    markers.push(m); bounds.extend(m.getPosition());
+  });
+  if (markers.length) { map.fitBounds(bounds, 40); if (markers.length === 1) map.setZoom(13); }
+}
 
-  let map, allPins = [], markers = [], infoWindows = [], activeFilter = 'all', selectedIdx = null;
-  let fedexStatuses = {};
-  let sheetsToken = null;
-  let gpsMarker = null, gpsWatchId = null;
+// ── Job details ───────────────────────────────────────────────────────────
+function sheet(title, html) {
+  closeSheet();
+  const s = document.createElement('div');
+  s.className = 'sheet'; s.id = 'sheet';
+  s.innerHTML = '<div class="sheet-head"><button class="icon-btn" onclick="closeSheet()">←</button><div class="t">' + title + '</div></div>' +
+                '<div class="sheet-body" id="sheet-body">' + html + '</div>';
+  document.body.appendChild(s);
+  history.pushState({ sheet: 1 }, '');
+  return s;
+}
+function closeSheet() { const s = $('#sheet'); if (s) s.remove(); }
+window.addEventListener('popstate', () => closeSheet());
 
-  // ── Map init ──────────────────────────────────────────────────────────────
-  window.initMap = function () {
-    map = new google.maps.Map(document.getElementById('map'), {
-      center: { lat: 39.7392, lng: -104.9903 },
-      zoom: 10,
-      mapTypeId: 'roadmap',
-      styles: darkMapStyles(),
-      zoomControl: true,
-      streetViewControl: false,
-      fullscreenControl: true,
-    });
-    // Don't load pins here — wait for login
+async function openJob(cni) {
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  sheet(esc(j.company || 'CNI ' + cni), jobTop(j) + '<div id="det"><div class="empty"><span class="spin"></span> Loading details…</div></div>');
+  try {
+    const d = (await api('details', { cni })).details;
+    if ($('#det')) $('#det').innerHTML = detailsHtml(d);
+  } catch (e) { if ($('#det')) $('#det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+function jobTop(j) {
+  const phones = phonesIn(j.note);
+  return '<div class="card">' +
+      '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
+      '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
+      (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
+      '<div style="margin-top:6px">' + apptChip(j) + (j.lsdt ? ' <span class="chip amber">SLA ' + esc(j.lsdt) + '</span>' : '') + '</div>' +
+    '</div>' +
+    '<div class="actions">' +
+      '<a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a>' +
+      (phones[0] ? '<a class="act" href="tel:' + esc(phones[0].replace(/[^\d+]/g, '')) + '">✆ Call</a>' : '<span class="act" style="opacity:.4">✆ No phone</span>') +
+      '<a class="act" href="https://hemmersbach.fieldcode.com/filter?cni=' + esc(j.cni) + '" target="_blank" rel="noopener">⧉ Fieldcode</a>' +
+    '</div>' +
+    '<div class="sec"><h3>Send update to Teams</h3><div class="actions">' +
+      ['onway|🚗 On my way', 'arrived|📍 Arrived', 'late|⏰ Late', 'parts|🔧 Need parts', 'done|✅ Work done', 'note|💬 Message'].map(x => {
+        const [k, l] = x.split('|');
+        return '<button class="act" onclick="sendUpdate(\'' + j.cni + '\',\'' + k + '\')">' + l + '</button>';
+      }).join('') +
+    '</div></div>' +
+    '<div class="sec"><button class="act primary wide" style="width:100%" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button></div>';
+}
+function kv(obj, skip) {
+  const rows = Object.entries(obj || {}).filter(([k, v]) => v !== '' && v !== null && v !== undefined && !(skip || []).includes(k));
+  return rows.length ? '<dl class="kv">' + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>' : '';
+}
+function detailsHtml(d) {
+  let h = '';
+  if (d.woNote && d.woNote.note) h += '<div class="sec"><h3>Dispatch note</h3><div class="card pre">' + linkify(d.woNote.note) + '</div></div>';
+  if (d.schedNotes && d.schedNotes.length) h += '<div class="sec"><h3>Scheduling</h3><div class="card feed">' +
+    d.schedNotes.map(s => '<div class="item"><div class="h">' + esc(s.from || '') + '</div>' + esc(s.line) + '</div>').join('') + '</div></div>';
+  if (d.fedexNotes && d.fedexNotes.length) h += '<div class="sec"><h3>Parts pickup</h3>' + d.fedexNotes.map(f =>
+    '<div class="card"><div class="co">' + esc(f.title || 'FedEx location') + '</div><div class="meta">' + esc(f.query) + '</div><div class="pre small" style="margin-top:4px">' + esc(f.note) + '</div>' +
+    '<a class="act" style="display:block;margin-top:8px" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(f.query) + '">▶ Navigate to pickup</a></div>').join('') + '</div>';
+  if (d.updates && d.updates.length) h += '<div class="sec"><h3>Teams</h3><div class="card feed">' + d.updates.map(u =>
+    '<div class="item ' + (u.role === 'HEM' ? 'hem' : '') + '"><div class="h">' + esc(u.who) + ' · ' + esc(u.time) + (u.role === 'HEM' ? ' · HEM' : '') + '</div><div class="pre">' + esc(u.text) + '</div></div>').join('') + '</div></div>';
+  if (d.closures && d.closures.length) h += '<div class="sec"><h3>Closure forms</h3>' + d.closures.map(c =>
+    '<div class="card">' + kv({ Submitted: c.submitted, Visit: c.visit, Successful: c.successful, Reason: c.failReason, Tech: c.tech, 'Return tracking': c.tracking, Work: c.work }) + '</div>').join('') + '</div>';
+  if (d.fieldcode) h += '<div class="sec"><h3>Fieldcode</h3><div class="card">' + kv(d.fieldcode, ['Imported', 'Fieldcode Id']) + '</div></div>';
+  if (d.draft) h += '<div class="sec"><h3>Customer</h3><div class="card">' + kv({ Name: d.draft.customer, Email: d.draft.email, Model: d.draft.model, Drafted: d.draft.drafted }) + '</div></div>';
+  if (d.index) h += '<div class="sec"><h3>Ticket index</h3><div class="card">' + kv({ Tech: d.index.tech, Location: d.index.location, 'CNE / WO': d.index.cne }) + '</div></div>';
+  h += '<div class="sec"><h3>Emails</h3><div id="emails">' + (d.emails ? emailsHtml(d.emails) :
+       '<button class="act" style="width:100%" onclick="loadEmails(\'' + d.cni + '\')">Load emails about this ticket</button>') + '</div></div>';
+  return h;
+}
+function emailsHtml(list) {
+  return list.length ? list.map(m => '<div class="card"><div class="small">' + esc(m.date) + ' · ' + esc(m.from) + '</div><div class="co" style="font-size:14px">' + esc(m.subject) + '</div><div class="pre small" style="margin-top:4px">' + esc(m.text) + '</div></div>').join('')
+                     : '<div class="empty">No emails found</div>';
+}
+async function loadEmails(cni) {
+  $('#emails').innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  try { $('#emails').innerHTML = emailsHtml((await api('details', { cni, emails: true })).details.emails || []); }
+  catch (e) { $('#emails').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+function linkify(t) {
+  return esc(t).replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, p => '<a href="tel:' + p.replace(/[^\d+]/g, '') + '">' + p + '</a>');
+}
+
+// ── Updates to Teams ──────────────────────────────────────────────────────
+async function sendUpdate(cni, kind) {
+  let text = '';
+  if (kind === 'note' || kind === 'late' || kind === 'parts') {
+    text = prompt(kind === 'note' ? 'Message for dispatch:' : kind === 'late' ? 'How late / new ETA? (optional)' : 'Which part? (optional)') ;
+    if (text === null) return;
+    if (kind === 'note' && !text.trim()) return;
+  }
+  try { const j = await api('update', { cni, kind, text }); toast('Sent to ' + j.sentTo); }
+  catch (e) { toast(e.message, 4000); }
+}
+
+// ── Closure form ──────────────────────────────────────────────────────────
+let schema = store.get('rw_schema', null);
+async function openClosure(cni) {
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  sheet('Close CNI ' + esc(cni), '<div id="cf"><div class="empty"><span class="spin"></span> Loading form…</div></div>');
+  try { const s = (await api('schema')).schema; schema = s; store.set('rw_schema', s); }
+  catch (e) { if (!schema) { $('#cf').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; } }
+  const yes = v => /^(yes|y|true|successful)$/i.test(String(v || '').trim());
+  const draft = store.get('rw_close_' + cni, {});
+  const field = f => {
+    if (f.kind === 'auto' || f.kind === 'auto-email') return '';
+    const id = 'f_' + f.key, req = f.required ? ' <i>*</i>' : '';
+    let val = draft[f.key] ?? (f.kind === 'cni' ? cni : f.kind === 'agent' ? session.user.name : f.kind === 'date' ? todayISO() : '');
+    let input;
+    if (f.kind === 'choice') {
+      input = '<div class="seg" data-key="' + f.key + '">' + f.choices.map(c => '<button type="button" class="' + (val === c ? 'on' : '') + '" onclick="segPick(this)">' + esc(c) + '</button>').join('') + '</div>' +
+              '<input type="hidden" id="' + id + '" value="' + esc(val) + '">';
+    } else if (f.kind === 'long') input = '<textarea class="in" id="' + id + '">' + esc(val) + '</textarea>';
+    else {
+      const type = f.kind === 'date' ? 'date' : f.kind === 'time' ? 'time' : f.kind === 'datetime' ? 'datetime-local' : f.kind === 'number' ? 'number' : 'text';
+      input = '<input class="in" type="' + type + '" id="' + id + '" value="' + esc(val) + '">';
+    }
+    const isFail = f.col === schema.failCol;
+    return '<label class="f" data-col="' + f.col + '"' + (isFail ? ' id="fail-wrap"' : '') + '><span>' + esc(f.label) + req + '</span>' + input + '</label>';
   };
+  $('#cf').innerHTML = '<div class="card" style="margin-bottom:12px"><b>' + esc(j.company || '') + '</b><div class="meta">' + esc(j.address || '') + '</div></div>' +
+    schema.fields.map(field).join('') +
+    '<button class="act primary wide" style="width:100%" id="cf-send" onclick="submitClosure(\'' + cni + '\')">Submit closure</button>' +
+    '<div class="small" style="text-align:center;margin-top:8px">Goes into the same closure form sheet as the Google Form.</div>';
+  const syncFail = () => {
+    const w = $('#fail-wrap'); if (!w) return;
+    const v = $('#f_c' + schema.successCol) ? $('#f_c' + schema.successCol).value : '';
+    w.classList.toggle('hidden', !v || yes(v));
+  };
+  segPick.after = () => { syncFail(); saveDraft(cni); };
+  $('#cf').addEventListener('input', () => saveDraft(cni));
+  syncFail();
+}
+function segPick(btn) {
+  const seg = btn.parentElement;
+  seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+  $('#f_' + seg.dataset.key).value = btn.textContent;
+  if (segPick.after) segPick.after();
+}
+function closureValues() {
+  const v = {};
+  schema.fields.forEach(f => { const el = $('#f_' + f.key); if (el && !el.closest('.hidden')) v[f.key] = el.value; });
+  return v;
+}
+function saveDraft(cni) { store.set('rw_close_' + cni, closureValues()); }
+async function submitClosure(cni) {
+  const v = closureValues();
+  const missing = schema.fields.filter(f => f.required && !['auto', 'auto-email'].includes(f.kind) && !String(v[f.key] || '').trim());
+  if (missing.length) { toast('Missing: ' + missing.map(f => f.label).join(', '), 4000); return; }
+  if (!confirm('Submit the closure for CNI ' + cni + '?')) return;
+  const b = $('#cf-send'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…';
+  try {
+    await api('close', { cni, values: v });
+    store.del('rw_close_' + cni);
+    toast('Closure submitted ✓', 3500);
+    closeSheet(); history.back();
+    jobs = jobs.filter(x => x.cni !== cni); render();
+  } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = 'Submit closure'; }
+}
 
-  // ── Load pins from sheet ──────────────────────────────────────────────────
-  async function loadPins() {
-    if (!currentUser) return;
-    try {
-      const [activeRes, doneRes] = await Promise.all([
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(PINS_TAB)}?key=${SHEETS_KEY}`),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(DONE_TAB)}?key=${SHEETS_KEY}`).catch(() => ({ ok: false })),
-      ]);
-      const activeJson = await activeRes.json();
-      const doneJson   = (doneRes.ok && doneRes.status !== 400) ? await doneRes.json().catch(() => ({ values: [] })) : { values: [] };
+// ── Parts (FedEx) ─────────────────────────────────────────────────────────
+async function loadParts() {
+  if (!session) return;
+  const el = $('#view-parts');
+  if (parts === null) el.innerHTML = '<div class="empty"><span class="spin"></span> Checking FedEx…</div>';
+  try { parts = (await api('parts', { tech: techFilter })).parts; store.set('rw_parts_' + session.user.name, parts); }
+  catch (e) { parts = parts || store.get('rw_parts_' + session.user.name, []); if (!offline) toast(e.message, 4000); }
+  renderParts();
+}
+function renderParts() {
+  const el = $('#view-parts');
+  if (parts === null) return;
+  const waiting = parts.filter(p => p.fedex && p.fedex.held && !p.fedex.delivered).length;
+  $('#parts-badge').innerHTML = waiting ? '<span class="badge">' + waiting + '</span>' : '';
+  if (!parts.length) { el.innerHTML = '<div class="empty">No parts waiting</div>'; return; }
+  const admin = session.user.admin && techFilter === 'ALL';
+  el.innerHTML = parts.map(p => {
+    const f = p.fedex;
+    const st = !f ? '<span class="chip">No FedEx status</span>'
+      : f.delivered && f.ours ? '<span class="chip green">Picked up' + (f.receivedBy ? ' by ' + esc(f.receivedBy) : '') + '</span>'
+      : f.delivered ? '<span class="chip red">⚠ Picked up by ' + esc(f.receivedBy || 'unknown') + '</span>'
+      : f.held ? '<span class="chip amber">Ready for pickup</span>'
+      : '<span class="chip blue">' + esc(f.status) + '</span>';
+    return '<div class="card">' +
+      '<div class="row between"><b>' + esc(p.tracking) + '</b>' + st + '</div>' +
+      '<div class="meta">' + esc(p.pickupName || '') + (p.pickup ? ' · ' + esc(p.pickup) : '') + '</div>' +
+      '<div class="small">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') +
+        (f && (f.where || f.at) ? ' · ' + esc([f.where, f.at].filter(Boolean).join(' · ')) : '') + '</div>' +
+      '<div class="actions" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
+        (p.pickup ? '<a class="act" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(p.pickup) + '">▶ Navigate</a>' : '<span></span>') +
+        (p.markedPickedUp ? '<span class="act" style="opacity:.6">✓ Marked</span>'
+          : '<button class="act" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>') +
+      '</div></div>';
+  }).join('');
+}
+async function pickedUp(tracking, cni, btn) {
+  if (!confirm('Mark part ' + tracking + ' as picked up?')) return;
+  btn.disabled = true;
+  try { await api('pickedup', { tracking, cni }); toast('Marked picked up'); const p = parts.find(x => x.tracking === tracking); if (p) p.markedPickedUp = true; renderParts(); }
+  catch (e) { btn.disabled = false; toast(e.message, 4000); }
+}
 
-      const parseRows = (json, isDone) =>
-        (json.values ?? []).slice(1).map((r, i) => ({
-          idx:     (isDone ? 10000 : 0) + i,
-          type:    isDone ? 'done' : (r[0] ?? '').toLowerCase().trim(),
-          tech:    (r[1] ?? '').toLowerCase().trim(),
-          address: r[2] ?? '',
-          note:    r[3] ?? '',
-          cni:     r[4] ?? '',
-          lat:     parseFloat(r[5]) || null,
-          lng:     parseFloat(r[6]) || null,
-          date:    r[7] ?? '',
-          row:     i + 2,
-          isDone,
-        })).filter(p => p.lat && p.lng);
+// ── Theme ─────────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const light = document.documentElement.dataset.theme !== 'light';
+  document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  store.set('rw_theme', light ? 'light' : 'dark');
+  if (map) map.setOptions({ styles: light ? [] : DARK });
+}
+document.documentElement.dataset.theme = store.get('rw_theme', 'dark');
+const DARK = [
+  { elementType: 'geometry', stylers: [{ color: '#1d1d2a' }] }, { elementType: 'labels.text.fill', stylers: [{ color: '#8a8aa0' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#1d1d2a' }] }, { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2c2c40' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3c3c56' }] }, { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1622' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] }, { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+];
 
-      const active = parseRows(activeJson, false);
-      const done   = parseRows(doneJson,   true);
-      allPins = [...active, ...done];
-
-      renderPins();
-      document.getElementById('last-updated').textContent =
-        'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch(e) {
-      console.error('[RW Map] Load error:', e);
-      document.getElementById('last-updated').textContent = 'Error loading pins';
-    }
-  }
-
-  // ── Filter logic ──────────────────────────────────────────────────────────
-  function matchesFilter(p) {
-    // Non-admin users only see their own pins
-    if (!isAdmin && p.tech !== currentUser) return false;
-    // Completed pins only show in 'done' filter, never in others
-    if (p.isDone && activeFilter !== 'done') return false;
-    if (!p.isDone && activeFilter === 'done') return false;
-    if (activeFilter === 'all')    return true;
-    if (activeFilter === 'wo')     return p.type === 'wo';
-    if (activeFilter === 'fdx')    return p.type === 'fdx';
-    if (activeFilter === 'andrei') return p.tech === 'andrei';
-    if (activeFilter === 'jiho')   return p.tech === 'jiho';
-    if (activeFilter === 'done')   return p.isDone;
-    return true;
-  }
-
-  function setFilter(f) {
-    activeFilter = f;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById('f-' + f);
-    if (btn) btn.classList.add('active');
-    renderPins();
-  }
-
-  // ── Render markers + sidebar ──────────────────────────────────────────────
-  function renderPins() {
-    markers.forEach(m => m.setMap(null));
-    infoWindows.forEach(iw => iw.close());
-    markers = []; infoWindows = [];
-
-    const filtered = allPins.filter(matchesFilter);
-    const list = document.getElementById('pin-list');
-
-    if (filtered.length === 0) {
-      list.innerHTML = '<div class="empty-state">No pins match the current filter.</div>';
-    } else {
-      list.innerHTML = filtered.map(p => {
-        const typeLabel = p.isDone ? 'Completed' : p.type === 'fdx' ? 'FedEx' : 'Workorder';
-        const typeClass = p.isDone ? 'done' : p.type;
-        const canComplete = !p.isDone && (isAdmin || p.tech === currentUser);
-        return `<div class="pin-card ${selectedIdx === p.idx ? 'selected' : ''} ${typeClass}" id="card-${p.idx}" onclick="selectPin(${p.idx})">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
-            <div>
-              <span class="pin-type ${typeClass}">${typeLabel}</span>
-              <span class="pin-tech ${p.tech}">${p.tech === 'andrei' ? 'Andrei' : 'Jiho'}</span>
-            </div>
-            <a href="https://maps.google.com/maps?daddr=${encodeURIComponent(p.address)}" target="_blank" onclick="event.stopPropagation()" style="display:inline-block;padding:4px 8px;background:#4a9d6f;color:#fff;border-radius:5px;font-size:10px;font-weight:700;text-decoration:none;white-space:nowrap;flex-shrink:0;">▶ Navigate</a>
-          </div>
-          <div class="pin-address">${esc(p.address)}</div>
-          <div class="pin-note">${esc(p.note)}</div>
-          ${p.type === 'fdx' || p.isDone ? `<div id="fdx-status-${p.idx}" style="margin-top:5px;font-size:10px;font-family:Arial,sans-serif;"></div>` : ''}
-          ${p.cni ? `<div class="pin-cni">CNI ${esc(p.cni)}</div>` : ''}
-          ${p.date ? `<div class="pin-date">${esc(p.date)}</div>` : ''}
-          ${canComplete ? `<button class="btn-complete" onclick="event.stopPropagation();markComplete(${p.idx})">✓ Mark Complete</button>` : ''}
-          ${p.isDone && isAdmin ? `<button class="btn-complete done-btn" onclick="event.stopPropagation();restorePin(${p.idx})">↩ Restore</button>` : ''}
-        </div>`;
-      }).join('');
-    }
-
-    // Markers
-    filtered.forEach((p, fi) => {
-      const color = COLORS[p.isDone ? 'done' : p.type] ?? COLORS.wo;
-      const tcolor = TECH_COLORS[p.tech] ?? '#aaa';
-      const marker = new google.maps.Marker({
-        position: { lat: p.lat, lng: p.lng },
-        map,
-        title: p.address,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          fillColor: color.fill,
-          fillOpacity: p.isDone ? 0.4 : 1,
-          strokeColor: color.stroke,
-          strokeWeight: 2,
-          scale: p.type === 'fdx' ? 8 : 10,
-        },
-        zIndex: p.isDone ? 0 : p.type === 'fdx' ? 1 : 2,
-      });
-
-      const iw = new google.maps.InfoWindow({
-        content: `<div style="font-family:system-ui,sans-serif;font-size:12px;max-width:240px;line-height:1.5;">
-          <div style="font-weight:700;margin-bottom:6px;">${esc(p.address)}</div>
-          <div style="color:#333;white-space:pre-wrap;margin-bottom:8px;">${esc(p.note)}</div>
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-            <div>
-              <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:${p.isDone?'#eee':'#e8f5e9'};color:${color.fill};">${p.isDone?'Completed':p.type==='fdx'?'FedEx':'Workorder'}</span>
-              <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:#f0f0f8;color:${tcolor};margin-left:4px;">${p.tech==='andrei'?'Andrei':'Jiho'}</span>
-            </div>
-            <a href="https://maps.google.com/maps?daddr=${encodeURIComponent(p.address)}" target="_blank" style="display:inline-block;padding:5px 10px;background:#4a9d6f;color:#fff;border-radius:5px;font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap;">▶ Navigate</a>
-          </div>
-        </div>`,
-        maxWidth: 260,
-      });
-
-      marker.addListener('click', () => {
-        infoWindows.forEach(w => w.close());
-        iw.open(map, marker);
-        selectPin(p.idx, false);
-      });
-
-      markers.push(marker);
-      infoWindows.push(iw);
-    });
-
-    if (filtered.length > 0 && map) {
-      const bounds = new google.maps.LatLngBounds();
-      filtered.forEach(p => bounds.extend({ lat: p.lat, lng: p.lng }));
-      map.fitBounds(bounds, { top: 40, right: 20, bottom: 20, left: 20 });
-      if (filtered.length === 1) map.setZoom(14);
-    }
-
-    updateStatusBadges();
-  }
-
-  // ── Select pin ────────────────────────────────────────────────────────────
-  function selectPin(idx, panMap = true) {
-    selectedIdx = idx;
-    document.querySelectorAll('.pin-card').forEach(el => el.classList.remove('selected'));
-    const card = document.getElementById('card-' + idx);
-    if (card) { card.classList.add('selected'); card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-    if (panMap) {
-      const pin = allPins.find(p => p.idx === idx);
-      if (pin && map) {
-        map.panTo({ lat: pin.lat, lng: pin.lng });
-        map.setZoom(14);
-        const fi = allPins.filter(matchesFilter).findIndex(p => p.idx === idx);
-        if (fi >= 0 && infoWindows[fi]) {
-          infoWindows.forEach(w => w.close());
-          infoWindows[fi].open(map, markers[fi]);
-        }
-      }
-    }
-  }
-
-  // ── Mark complete (Sheets API) ───────────────────────────────────────────
-  async function markComplete(idx) {
-    const pin = allPins.find(p => p.idx === idx);
-    if (!pin || pin.isDone) return;
-    if (!sheetsToken) { alert('Click "Authorize Sheet" first to enable this feature.'); return; }
-    if (!confirm('Mark CNI ' + (pin.cni || pin.address) + ' complete and move to archive?')) return;
-
-    const card = document.getElementById('card-' + idx);
-    if (card) card.style.opacity = '0.5';
-
-    try {
-      // 1. Read the row data from Active Pins
-      const rowData = await sheetsRequest('GET',
-        '/values/' + encodeURIComponent(PINS_TAB + '!A' + pin.row + ':H' + pin.row)
-      );
-      const values = rowData.values?.[0];
-      if (!values) throw new Error('Row not found in Active Pins');
-
-      // 2. Ensure Completed Pins tab exists with headers
-      try {
-        await sheetsRequest('GET', '/values/' + encodeURIComponent(DONE_TAB + '!A1'));
-      } catch {
-        // Tab doesn't exist — create via batchUpdate
-        await sheetsRequest('POST', ':batchUpdate', {
-          requests: [{ addSheet: { properties: { title: DONE_TAB } } }]
-        });
-        await sheetsRequest('PUT',
-          '/values/' + encodeURIComponent(DONE_TAB + '!A1:I1') + '?valueInputOption=RAW',
-          { values: [['Type','Tech','Address','Note','CNI','Lat','Lng','Date Added','Completed']] }
-        );
-      }
-
-      // 3. Append to Completed Pins
-      await sheetsRequest('POST',
-        '/values/' + encodeURIComponent(DONE_TAB + '!A:I') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',
-        { values: [[...values, new Date().toLocaleDateString()]] }
-      );
-
-      // 4. Delete from Active Pins
-      const sheetMeta = await sheetsRequest('GET', '');
-      const activeSheet = sheetMeta.sheets?.find(s => s.properties.title === PINS_TAB);
-      if (activeSheet) {
-        await sheetsRequest('POST', ':batchUpdate', {
-          requests: [{
-            deleteDimension: {
-              range: {
-                sheetId:    activeSheet.properties.sheetId,
-                dimension:  'ROWS',
-                startIndex: pin.row - 1,
-                endIndex:   pin.row,
-              }
-            }
-          }]
-        });
-      }
-
-      console.log('[RW Map] Completed pin row', pin.row);
-      await loadPins();
-    } catch(e) {
-      console.error('[RW Map] Complete error:', e);
-      alert('Error: ' + e.message);
-      if (card) card.style.opacity = '1';
-    }
-  }
-
-  async function restorePin(idx) {
-    const pin = allPins.find(p => p.idx === idx);
-    if (!pin || !pin.isDone) return;
-    if (!sheetsToken) { alert('Click "Authorize Sheet" first.'); return; }
-    if (!confirm('Restore this pin to Active Pins?')) return;
-
-    const card = document.getElementById('card-' + idx);
-    if (card) card.style.opacity = '0.5';
-
-    try {
-      // 1. Read row from Completed Pins
-      const rowData = await sheetsRequest('GET',
-        '/values/' + encodeURIComponent(DONE_TAB + '!A' + pin.row + ':H' + pin.row)
-      );
-      const values = rowData.values?.[0];
-      if (!values) throw new Error('Row not found in Completed Pins');
-
-      // 2. Append to Active Pins
-      await sheetsRequest('POST',
-        '/values/' + encodeURIComponent(PINS_TAB + '!A:H') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',
-        { values: [values.slice(0, 8)] }
-      );
-
-      // 3. Delete from Completed Pins
-      const sheetMeta = await sheetsRequest('GET', '');
-      const doneSheet = sheetMeta.sheets?.find(s => s.properties.title === DONE_TAB);
-      if (doneSheet) {
-        await sheetsRequest('POST', ':batchUpdate', {
-          requests: [{
-            deleteDimension: {
-              range: {
-                sheetId:    doneSheet.properties.sheetId,
-                dimension:  'ROWS',
-                startIndex: pin.row - 1,
-                endIndex:   pin.row,
-              }
-            }
-          }]
-        });
-      }
-
-      console.log('[RW Map] Restored pin row', pin.row);
-      await loadPins();
-    } catch(e) {
-      console.error('[RW Map] Restore error:', e);
-      alert('Error: ' + e.message);
-      if (card) card.style.opacity = '1';
-    }
-  }
-
-  // ── GPS location ──────────────────────────────────────────────────────────
-  function startGPS() {
-    if (!navigator.geolocation) return;
-    gpsWatchId = navigator.geolocation.watchPosition(pos => {
-      const { latitude: lat, longitude: lng } = pos.coords;
-      if (!map) return;
-      if (!gpsMarker) {
-        gpsMarker = new google.maps.Marker({
-          position: { lat, lng }, map,
-          title: 'Your location',
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            fillColor: '#4a90d9', fillOpacity: 1,
-            strokeColor: '#fff', strokeWeight: 2, scale: 8,
-          },
-          zIndex: 10,
-        });
-      } else {
-        gpsMarker.setPosition({ lat, lng });
-      }
-    }, err => console.warn('[RW Map] GPS error:', err), { enableHighAccuracy: true });
-  }
-
-  function stopGPS() {
-    if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
-    gpsMarker?.setMap(null);
-    gpsMarker = null; gpsWatchId = null;
-  }
-
-  // ── FedEx tracking ────────────────────────────────────────────────────────
-  async function checkAllTracking() {
-    const btn = document.getElementById('btn-track');
-    if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
-    const fdxPins = allPins.filter(p => p.type === 'fdx' || p.isDone);
-    const trackingNumbers = [];
-    fdxPins.forEach(p => {
-      p.note.split('\n').forEach(line => {
-        const m = line.match(/^(\d{10,30})/);
-        if (m) trackingNumbers.push(m[1]);
-      });
-    });
-    const unique = [...new Set(trackingNumbers)];
-    if (unique.length) {
-      try {
-        for (let i = 0; i < unique.length; i += 10) {
-          const batch = unique.slice(i, i + 10).join(',');
-          const res   = await fetch(FEDEX_PROXY + '?tracking=' + encodeURIComponent(batch));
-          const data  = await res.json();
-          (data.results ?? []).forEach(r => { fedexStatuses[r.tracking] = r; });
-        }
-      } catch(e) { console.error('[RW Map] FedEx error:', e); }
-      updateStatusBadges();
-    }
-    if (btn) { btn.textContent = 'Check Status'; btn.disabled = false; }
-  }
-
-  function statusColor(code) {
-    if (!code) return '#666';
-    const m = { DL: '#2e7d32', IT: '#1565c0', OD: '#e65100', PU: '#6a1b9a', PX: '#c62828' };
-    return m[code.toUpperCase()] ?? '#555';
-  }
-
-  function updateStatusBadges() {
-    allPins.filter(p => p.type === 'fdx' || p.isDone).forEach(p => {
-      const el = document.getElementById('fdx-status-' + p.idx);
-      if (!el) return;
-      const badges = p.note.split('\n').map(line => {
-        const m = line.match(/^(\d{10,30})/);
-        if (!m) return '';
-        const s = fedexStatuses[m[1]];
-        if (!s) return '';
-        const color = statusColor(s.status);
-        const loc = s.location ? ' · ' + s.location : '';
-        const eta = s.eta ? ' · ETA ' + s.eta : '';
-        return '<span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#1a1a2e;border:1px solid ' + color + ';color:' + color + ';margin:1px 2px 1px 0;">' + s.description + loc + eta + '</span>';
-      }).filter(Boolean).join('');
-      el.innerHTML = badges;
-    });
-  }
-
-  // ── Escape HTML ───────────────────────────────────────────────────────────
-  function esc(str) {
-    return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  // ── Dark map styles ───────────────────────────────────────────────────────
-  function darkMapStyles() {
-    return [
-      { elementType:'geometry', stylers:[{color:'#1a1a2e'}] },
-      { elementType:'labels.text.fill', stylers:[{color:'#746855'}] },
-      { elementType:'labels.text.stroke', stylers:[{color:'#1a1a2e'}] },
-      { featureType:'road', elementType:'geometry', stylers:[{color:'#2a2a42'}] },
-      { featureType:'road', elementType:'geometry.stroke', stylers:[{color:'#1a1a2e'}] },
-      { featureType:'road', elementType:'labels.text.fill', stylers:[{color:'#9ca5b3'}] },
-      { featureType:'road.highway', elementType:'geometry', stylers:[{color:'#3a3a58'}] },
-      { featureType:'road.highway', elementType:'geometry.stroke', stylers:[{color:'#1a1a2e'}] },
-      { featureType:'road.highway', elementType:'labels.text.fill', stylers:[{color:'#f3d19c'}] },
-      { featureType:'water', elementType:'geometry', stylers:[{color:'#0d1a26'}] },
-      { featureType:'water', elementType:'labels.text.fill', stylers:[{color:'#515c6d'}] },
-      { featureType:'poi', elementType:'geometry', stylers:[{color:'#1a1a2e'}] },
-      { featureType:'poi.park', elementType:'geometry', stylers:[{color:'#162820'}] },
-      { featureType:'transit', elementType:'geometry', stylers:[{color:'#2f3948'}] },
-      { featureType:'administrative', elementType:'geometry', stylers:[{color:'#2a2a40'}] },
-      { featureType:'administrative.country', elementType:'labels.text.fill', stylers:[{color:'#9e9e9e'}] },
-      { featureType:'administrative.locality', elementType:'labels.text.fill', stylers:[{color:'#bdbdbd'}] },
-    ];
-  }
+// ── Boot ──────────────────────────────────────────────────────────────────
+window.addEventListener('online', () => refresh());
+document.addEventListener('visibilitychange', () => { if (!document.hidden && lastAt && Date.now() - Date.parse(lastAt) > 60e3) refresh(); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if (session && session.user) start();
 </script>
-
-<script async defer
-  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg&callback=initMap">
-</script>
-
 </body>
 </html>
