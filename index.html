@@ -174,7 +174,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.9';
+const APP_VERSION = '3.10';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -471,6 +471,41 @@ function openFromLink() {
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.open) { refresh(); openJob(e.data.open); } });
 
+// Schedule a visit the end user has confirmed → HEM general chat + appointment + pin line
+function openSchedule(cni) {
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  const tomorrow = addDays(todayISO(), 1);
+  sheet('Schedule CNI ' + esc(cni), '<div class="card" style="margin-bottom:12px"><b>' + esc(j.company || '') + '</b><div class="meta">' + esc(j.address || '') + '</div>' +
+      (j.appt ? '<div class="small" style="margin-top:4px">Currently: ' + esc(nice(j.appt.date)) + (j.appt.time ? ' ' + esc(j.appt.time) : '') + '</div>' : '') + '</div>' +
+    '<label class="f"><span>Date <i>*</i></span><input class="in" type="date" id="sc-date" min="' + todayISO() + '" value="' + esc(j.appt && j.appt.date >= todayISO() ? j.appt.date : tomorrow) + '"></label>' +
+    '<label class="f"><span>Time window (optional)</span><div class="seg" id="sc-win">' +
+      ['8-12', '12-5', '9-3', 'All day'].map(w => '<button type="button" onclick="pickWin(this)">' + w + '</button>').join('') + '</div>' +
+      '<input class="in" id="sc-time" placeholder="or type it, e.g. 10:00 AM" style="margin-top:6px"></label>' +
+    '<label class="f"><span>End user name <i>*</i></span><input class="in" id="sc-name" value="' + esc(j.customer || '') + '" autocomplete="off"></label>' +
+    '<label class="f"><span>Note (optional)</span><textarea class="in" id="sc-note" style="min-height:60px" placeholder="e.g. ask for Mike at the front desk"></textarea></label>' +
+    '<label class="row" style="margin:4px 2px 16px;gap:10px;align-items:flex-start"><input type="checkbox" id="sc-ok" style="margin-top:3px"> ' +
+      '<span>I confirmed this date and time with the end user</span></label>' +
+    '<button class="act primary wide" style="width:100%" id="sc-go" onclick="doSchedule(\'' + cni + '\')">📅 Schedule</button>' +
+    '<div class="small" style="margin-top:10px">Posts in the HEM general chat: “CNI ' + esc(cni) + ' - Scheduled for [date] with end user [name]”, and updates the job and its map pin.</div>');
+}
+function pickWin(btn) {
+  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+  $('#sc-time').value = btn.textContent === 'All day' ? '' : btn.textContent;
+}
+async function doSchedule(cni) {
+  const date = $('#sc-date').value, name = $('#sc-name').value.trim();
+  if (!date) return toast('Pick a date');
+  if (!name) return toast('Enter the end user\'s name');
+  if (!$('#sc-ok').checked) return toast('Confirm the date with the end user first', 3500);
+  const b = $('#sc-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+  try {
+    const r = await api('schedule', { cni, date, time: $('#sc-time').value.trim(), name, note: $('#sc-note').value.trim(), confirmed: true });
+    toast('Posted: ' + r.posted, 4000);
+    const j = jobs.find(x => x.cni === cni); if (j) j.appt = { date, time: $('#sc-time').value.trim() };
+    render(); closeSheet(); history.back(); refresh();
+  } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = '📅 Schedule'; }
+}
+
 // Admin: give the ticket to another tech
 function openReassign(cni) {
   const j = jobs.find(x => x.cni === cni) || { cni };
@@ -548,8 +583,9 @@ function jobTop(j) {
     '<div class="actions">' +
       '<a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a>' +
       '<span id="dial-slot">' + dialBtn(phones[0]) + '</span>' +
-      '<a class="act" href="https://hemmersbach.fieldcode.com/filter?cni=' + esc(j.cni) + '" target="_blank" rel="noopener">⧉ Fieldcode</a>' +
+      '<button class="act" onclick="openSchedule(\'' + j.cni + '\')">📅 Schedule</button>' +
     '</div>' +
+    (session.user.admin ? '<a class="act" style="display:block;margin-top:8px" href="https://hemmersbach.fieldcode.com/filter?cni=' + esc(j.cni) + '" target="_blank" rel="noopener">⧉ Open in Fieldcode</a>' : '') +
     '<div class="sec"><h3>Log contact attempt <span id="att-count" style="text-transform:none;letter-spacing:0">' + attemptsLabel(j.attempts || 0) + '</span></h3><div class="actions" style="grid-template-columns:repeat(4,1fr)">' +
       ['call|📞 Call', 'voicemail|📼 Voicemail', 'text|💬 Text', 'email|✉️ Email'].map(x => {
         const [k, l] = x.split('|');
