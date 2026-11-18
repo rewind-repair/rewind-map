@@ -37,7 +37,9 @@
   header .brand { font-weight: 800; letter-spacing: .02em; }
   header .who { font-size: 12px; color: var(--sub); }
   header .grow { flex: 1; min-width: 0; }
-  header select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; max-width: 46vw; }
+  header { flex-wrap: wrap; }
+  header select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px;
+                  order: 10; flex: 1 1 100%; }
   .icon-btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 14px; line-height: 1; }
   #stamp { font-size: 11px; color: var(--dim); padding: 4px 16px; background: var(--bg); flex-shrink: 0; }
   #stamp.offline { color: var(--amber); }
@@ -172,7 +174,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.7';
+const APP_VERSION = '3.8';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -190,7 +192,23 @@ function toast(msg, ms) {
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const nice = iso => new Date(iso + 'T12:00').toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
-const phonesIn = t => [...new Set((String(t || '').match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g) || []).map(p => p.trim()))];
+// Phone numbers: "+1…", "(303) …", "303-555-…" anywhere; a bare 10-digit run only after a phone label
+// (CNE / WO numbers are 10 digits too)
+function phonesIn(text) {
+  const t = String(text || ''), out = [];
+  const re = /(\+?1[\s.-]?)?(\(?\d{3}\)?)([\s.-]?)(\d{3})([\s.-]?)(\d{4})(?!\d)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    if (m.index > 0 && /\d/.test(t[m.index - 1])) continue;
+    const formatted = (m[1] && m[1].includes('+')) || /[()]/.test(m[2]) || m[3] || m[5];
+    const labelled = /(phone|tel|mobile|cell|contact|call|ph|☎|📞)[^\n\d]{0,20}$/i.test(t.slice(Math.max(0, m.index - 30), m.index));
+    if (!formatted && !labelled) continue;
+    const d = m[0].replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+    if (d.length === 10 && !out.includes(d)) out.push(d);
+  }
+  return out.map(d => '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6));
+}
+const shortDate = s => { const t = Date.parse(s); return isNaN(t) ? '' : new Date(t).toLocaleDateString([], { month: 'numeric', day: 'numeric' }); };
 const navUrl = j => j.lat ? 'https://www.google.com/maps/dir/?api=1&destination=' + j.lat + ',' + j.lng
                           : 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(j.address || j.loc || j.city);
 
@@ -297,7 +315,7 @@ function jobCard(j) {
   return '<div class="card job" onclick="openJob(\'' + j.cni + '\')">' +
     '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span>' + apptChip(j) + '</div>' +
     '<div class="meta">' + esc([j.address || j.city, j.device].filter(Boolean).join(' · ')) + '</div>' +
-    '<div class="row small" style="margin-top:4px;flex-wrap:wrap">CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
+    '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') + '</div>' +
     (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
@@ -452,6 +470,29 @@ function openFromLink() {
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.open) { refresh(); openJob(e.data.open); } });
 
+// Admin: give the ticket to another tech
+function openReassign(cni) {
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  sheet('Reassign CNI ' + esc(cni), '<div class="card" style="margin-bottom:10px"><b>' + esc(j.company || '') + '</b><div class="meta">' + esc(j.address || '') +
+    '</div><div class="small">Now: ' + esc(j.tech || '?') + '</div></div>' +
+    '<label class="f"><span>New tech</span><select class="in" id="ra-tech">' + session.techs.filter(t => t.tech !== j.tech).map(t =>
+      '<option value="' + esc(t.tech) + '">' + esc(t.name) + (t.area ? ' · ' + esc(t.area) : '') + '</option>').join('') + '</select></label>' +
+    '<label class="row" style="margin:6px 2px 10px;gap:10px"><input type="checkbox" id="ra-email" checked> <span>Send them the dispatch email</span></label>' +
+    '<label class="row" style="margin:0 2px 16px;gap:10px"><input type="checkbox" id="ra-teams" checked> <span>Post it in their Teams chat</span></label>' +
+    '<button class="act primary wide" style="width:100%" id="ra-go" onclick="doReassign(\'' + cni + '\')">↪ Reassign</button>' +
+    '<div class="small" style="margin-top:10px">Both techs get a notification. The map pin moves to the new tech\'s list on the next sweep. Fieldcode itself is not changed.</div>');
+}
+async function doReassign(cni) {
+  const tech = $('#ra-tech').value, b = $('#ra-go');
+  b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+  try {
+    const r = await api('reassign', { cni, tech, email: $('#ra-email').checked, teams: $('#ra-teams').checked });
+    toast('Reassigned to ' + r.name + (r.mailed ? ' · email sent' : ''), 3500);
+    const j = jobs.find(x => x.cni === cni); if (j) j.tech = tech;
+    closeSheet(); history.back(); refresh();
+  } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = '↪ Reassign'; }
+}
+
 // Admin → tech about this ticket
 async function messageTech(cni, kind) {
   const text = prompt(kind === 'update' ? 'Update request (optional note):' : 'Message to the tech:', '');
@@ -485,7 +526,7 @@ async function openJob(cni) {
   } catch (e) { if ($('#det')) $('#det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 }
 function jobTop(j) {
-  const phones = phonesIn(j.note);
+  const phones = j.phone ? [j.phone] : phonesIn(j.note);
   return '<div class="card">' +
       '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
@@ -494,7 +535,7 @@ function jobTop(j) {
     '</div>' +
     '<div class="actions">' +
       '<a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a>' +
-      (phones[0] ? '<a class="act" href="tel:' + esc(phones[0].replace(/[^\d+]/g, '')) + '">✆ Dial</a>' : '<span class="act" style="opacity:.4">✆ No phone</span>') +
+      '<span id="dial-slot">' + dialBtn(phones[0]) + '</span>' +
       '<a class="act" href="https://hemmersbach.fieldcode.com/filter?cni=' + esc(j.cni) + '" target="_blank" rel="noopener">⧉ Fieldcode</a>' +
     '</div>' +
     '<div class="sec"><h3>Log contact attempt <span id="att-count" style="text-transform:none;letter-spacing:0">' + attemptsLabel(j.attempts || 0) + '</span></h3><div class="actions" style="grid-template-columns:repeat(4,1fr)">' +
@@ -511,7 +552,8 @@ function jobTop(j) {
     '</div></div>' +
     (session.user.admin ? '<div class="sec"><h3>Admin → ' + esc(j.tech || 'tech') + '</h3><div class="actions" style="grid-template-columns:1fr 1fr">' +
       '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'message\')">💬 Message tech</button>' +
-      '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'update\')">🔄 Request update</button></div></div>' : '') +
+      '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'update\')">🔄 Request update</button>' +
+      '<button class="act" style="grid-column:span 2" onclick="openReassign(\'' + j.cni + '\')">↪ Reassign to another tech</button></div></div>' : '') +
     '<div class="sec"><button class="act primary wide" style="width:100%" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button></div>';
 }
 function attemptsLabel(n) {
@@ -537,6 +579,10 @@ function attemptsHtml(list) {
     '<div class="item"><div class="h">' + esc(a.time ? new Date(a.time).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '') + ' · ' + esc(a.who) + '</div>' +
     esc(METHOD[a.method] || a.method) + (a.note ? ' — ' + esc(a.note) : '') + '</div>').join('') + '</div>' : '<div class="small" style="margin:0 4px">None logged yet</div>';
 }
+function dialBtn(ph) {
+  return ph ? '<a class="act" style="display:block" href="tel:' + esc(ph.replace(/[^\d+]/g, '')) + '">✆ ' + esc(ph) + '</a>'
+            : '<span class="act" style="display:block;opacity:.4">✆ No phone</span>';
+}
 function kv(obj, skip) {
   const rows = Object.entries(obj || {}).filter(([k, v]) => v !== '' && v !== null && v !== undefined && !(skip || []).includes(k));
   return rows.length ? '<dl class="kv">' + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>' : '';
@@ -545,12 +591,25 @@ function detailsHtml(d) {
   let h = '<div class="sec"><h3>Contact attempts</h3><div id="att-list">' + attemptsHtml(d.attempts || []) + '</div></div>';
   const jj = jobs.find(x => x.cni === d.cni); if (jj && d.attempts) { jj.attempts = d.attempts.length; if ($('#att-count')) $('#att-count').innerHTML = attemptsLabel(jj.attempts); }
   h += cardHtml(d.card);
+  // A phone number in the dispatch email / note when the job list had none
+  if ($('#dial-slot') && /No phone/.test($('#dial-slot').textContent)) {
+    const ph = phonesIn([d.woNote && d.woNote.note, d.card && d.card.text].filter(Boolean).join('\n'))[0];
+    if (ph) $('#dial-slot').innerHTML = dialBtn(ph);
+  }
   if (d.woNote && d.woNote.note) h += '<div class="sec"><h3>Dispatch note</h3><div class="card pre">' + linkify(d.woNote.note) + '</div></div>';
   if (d.schedNotes && d.schedNotes.length) h += '<div class="sec"><h3>Scheduling</h3><div class="card feed">' +
     d.schedNotes.map(s => '<div class="item"><div class="h">' + esc(s.from || '') + '</div>' + esc(s.line) + '</div>').join('') + '</div></div>';
-  if (d.fedexNotes && d.fedexNotes.length) h += '<div class="sec"><h3>Parts pickup</h3>' + d.fedexNotes.map(f =>
-    '<div class="card"><div class="co">' + esc(f.title || 'FedEx location') + '</div><div class="meta">' + esc(f.query) + '</div><div class="pre small" style="margin-top:4px">' + esc(f.note) + '</div>' +
-    '<a class="act" style="display:block;margin-top:8px" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(f.query) + '">▶ Navigate to pickup</a></div>').join('') + '</div>';
+  if (d.fedexNotes && d.fedexNotes.length) h += '<div class="sec"><h3>Parts pickup</h3>' + d.fedexNotes.map(f => {
+    const parts = f.parts || [];
+    const picked = p => (p.fedex && p.fedex.delivered && p.fedex.ours) || p.markedPickedUp;
+    const allPicked = parts.length && parts.every(picked);
+    const lines = parts.length ? parts.map(p => '<div class="row between small" style="margin-top:4px"><span>' + esc(p.tracking) + '</span>' +
+        (picked(p) ? '<span class="chip green">Picked up ✅</span>' : partChip(p.fedex)) + '</div>').join('')
+      : '<div class="pre small" style="margin-top:4px">' + esc(f.note) + '</div>';
+    return '<div class="card"><div class="co">' + esc(f.title || 'FedEx location') + '</div><div class="meta">' + esc(f.query) + '</div>' + lines +
+      (allPicked ? '<div class="act" style="display:block;margin-top:8px;color:var(--green)">Picked up ✅</div>'
+        : '<a class="act" style="display:block;margin-top:8px" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(f.query) + '">▶ Navigate to pickup</a>') + '</div>';
+  }).join('') + '</div>';
   if (d.updates && d.updates.length) h += '<div class="sec"><h3>Teams</h3><div class="card feed">' + d.updates.map(u =>
     '<div class="item ' + (u.role === 'HEM' ? 'hem' : '') + '"><div class="h">' + esc(u.who) + ' · ' + esc(u.time) + (u.role === 'HEM' ? ' · HEM' : '') + '</div><div class="pre">' + esc(u.text) + '</div></div>').join('') + '</div></div>';
   if (d.closures && d.closures.length) h += '<div class="sec"><h3>Closure forms</h3>' + d.closures.map(c =>
@@ -753,17 +812,23 @@ function renderParts() {
         (f && (f.where || f.at) ? ' · ' + esc([f.where, f.at].filter(Boolean).join(' · ')) : '') + '</div>' +
       (f && f.daysLeft != null && !done(p) ? '<div style="margin-top:6px">' + returnChip(f) +
         ' <a href="#" class="small" onclick="event.preventDefault();extendHold(\'' + p.tracking + '\',\'' + p.cni + '\')">Extended?</a></div>' : '') +
-      '<div class="actions" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
+      (done(p) ? '<div class="act" style="display:block;margin-top:8px;color:var(--green)">Picked up ✅</div>'
+      : '<div class="actions" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
         (p.pickup ? '<a class="act" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(p.pickup) + '">▶ Navigate</a>' : '<span></span>') +
-        (p.markedPickedUp ? '<span class="act" style="opacity:.6">✓ Marked</span>'
-          : '<button class="act" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>') +
-      '</div></div>';
+        '<button class="act" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>' +
+      '</div>') + '</div>';
   };
   el.innerHTML = (open.length ? '<div class="group">To pick up · ' + open.length + '</div>' + open.map(card).join('') : '<div class="empty">Nothing waiting to be picked up</div>') +
     (gone.length ? '<div class="group" style="cursor:pointer" onclick="partsShowDone=!partsShowDone;renderParts()">' + (partsShowDone ? '▾' : '▸') +
       ' Picked up · ' + gone.length + '</div>' + (partsShowDone ? gone.map(card).join('') : '') : '');
 }
 let partsShowDone = false;
+function partChip(f) {
+  if (!f) return '<span class="chip">No FedEx status</span>';
+  if (f.delivered) return '<span class="chip red">⚠ Picked up by ' + esc(f.receivedBy || 'unknown') + '</span>';
+  if (f.held) return f.daysLeft != null ? returnChip(f) : '<span class="chip amber">Ready for pickup</span>';
+  return '<span class="chip blue">' + esc(f.status) + '</span>';
+}
 function returnChip(f) {
   const d = f.daysLeft;
   const cls = d <= 1 ? 'red' : d <= 2 ? 'amber' : 'green';
