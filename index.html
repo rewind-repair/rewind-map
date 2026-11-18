@@ -529,7 +529,7 @@ async function openClosure(cni) {
   const field = f => {
     if (f.kind === 'auto' || f.kind === 'auto-email') return '';
     const id = 'f_' + f.key, req = f.required ? ' <i>*</i>' : '';
-    let val = draft[f.key] ?? (f.kind === 'cni' ? cni : f.kind === 'agent' ? session.user.name : f.kind === 'date' ? todayISO() : '');
+    let val = draft[f.key] ?? (f.kind === 'cni' ? cni : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : f.kind === 'date' ? todayISO() : '');
     let input;
     if (f.kind === 'choice') {
       input = '<div class="seg" data-key="' + f.key + '">' + f.choices.map(c => '<button type="button" class="' + (val === c ? 'on' : '') + '" onclick="segPick(this)">' + esc(c) + '</button>').join('') + '</div>' +
@@ -539,17 +539,17 @@ async function openClosure(cni) {
       const type = f.kind === 'date' ? 'date' : f.kind === 'time' ? 'time' : f.kind === 'datetime' ? 'datetime-local' : f.kind === 'number' ? 'number' : 'text';
       input = '<input class="in" type="' + type + '" id="' + id + '" value="' + esc(val) + '">';
     }
-    const isFail = f.col === schema.failCol;
-    return '<label class="f" data-col="' + f.col + '"' + (isFail ? ' id="fail-wrap"' : '') + '><span>' + esc(f.label) + req + '</span>' + input + '</label>';
+    const isFail = f.onlyIfFailed || f.col === schema.failCol;
+    return '<label class="f" data-col="' + f.col + '"' + (isFail ? ' data-fail="1"' : '') + '><span>' + esc(f.label) + req + '</span>' + input + '</label>';
   };
   $('#cf').innerHTML = '<div class="card" style="margin-bottom:12px"><b>' + esc(j.company || '') + '</b><div class="meta">' + esc(j.address || '') + '</div></div>' +
     schema.fields.map(field).join('') +
     '<button class="act primary wide" style="width:100%" id="cf-send" onclick="submitClosure(\'' + cni + '\')">Submit closure</button>' +
     '<div class="small" style="text-align:center;margin-top:8px">Goes into the same closure form sheet as the Google Form.</div>';
+  // Questions for unsuccessful visits only show once "No" is picked
   const syncFail = () => {
-    const w = $('#fail-wrap'); if (!w) return;
     const v = $('#f_c' + schema.successCol) ? $('#f_c' + schema.successCol).value : '';
-    w.classList.toggle('hidden', !v || yes(v));
+    document.querySelectorAll('#cf [data-fail]').forEach(w => w.classList.toggle('hidden', !v || yes(v)));
   };
   segPick.after = () => { syncFail(); saveDraft(cni); };
   $('#cf').addEventListener('input', () => saveDraft(cni));
@@ -599,7 +599,8 @@ function renderParts() {
   if (!parts.length) { el.innerHTML = '<div class="empty">No parts on the map</div>'; return; }
   const admin = session.user.admin && techFilter === 'ALL';
   const done = p => (p.fedex && p.fedex.delivered && p.fedex.ours) || p.markedPickedUp;
-  const open = parts.filter(p => !done(p)), gone = parts.filter(done);
+  const left = p => p.fedex && p.fedex.daysLeft != null ? p.fedex.daysLeft : 99;
+  const open = parts.filter(p => !done(p)).sort((a, b) => left(a) - left(b)), gone = parts.filter(done);
   const card = p => {
     const f = p.fedex;
     const st = !f ? '<span class="chip">No FedEx status</span>'
@@ -612,6 +613,8 @@ function renderParts() {
       '<div class="meta">' + esc(p.pickupName || '') + (p.pickup ? ' · ' + esc(p.pickup) : '') + '</div>' +
       '<div class="small">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') +
         (f && (f.where || f.at) ? ' · ' + esc([f.where, f.at].filter(Boolean).join(' · ')) : '') + '</div>' +
+      (f && f.daysLeft != null && !done(p) ? '<div style="margin-top:6px">' + returnChip(f) +
+        ' <a href="#" class="small" onclick="event.preventDefault();extendHold(\'' + p.tracking + '\',\'' + p.cni + '\')">Extended?</a></div>' : '') +
       '<div class="actions" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
         (p.pickup ? '<a class="act" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(p.pickup) + '">▶ Navigate</a>' : '<span></span>') +
         (p.markedPickedUp ? '<span class="act" style="opacity:.6">✓ Marked</span>'
@@ -623,6 +626,18 @@ function renderParts() {
       ' Picked up · ' + gone.length + '</div>' + (partsShowDone ? gone.map(card).join('') : '') : '');
 }
 let partsShowDone = false;
+function returnChip(f) {
+  const d = f.daysLeft;
+  const cls = d <= 1 ? 'red' : d <= 2 ? 'amber' : 'green';
+  const txt = d < 0 ? 'Past return date (' + f.returnBy + ')' : d === 0 ? 'Goes back today' : d + ' day' + (d === 1 ? '' : 's') + ' left · back ' + f.returnBy;
+  return '<span class="chip ' + cls + '">⏳ ' + esc(txt) + (f.extended ? ' · extended +' + f.extended : '') + '</span>';
+}
+async function extendHold(tracking, cni) {
+  const d = prompt('FedEx extended the hold by how many days?', '5');
+  if (d === null) return;
+  try { await api('extend', { tracking, cni, days: Number(d) }); toast('Hold extended +' + d + ' days'); parts = null; loadParts(); }
+  catch (e) { toast(e.message, 4000); }
+}
 async function pickedUp(tracking, cni, btn) {
   if (!confirm('Mark part ' + tracking + ' as picked up?')) return;
   btn.disabled = true;
