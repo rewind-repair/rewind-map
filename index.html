@@ -660,7 +660,7 @@ async function openClosure(cni) {
 function fixSchema(sc) {
   sc.fields.forEach(f => {
     const l = String(f.label || '').trim();
-    if (!l || /^column \d+$/i.test(l)) f.kind = 'skip';
+    if (!l || /^column \d+$/i.test(l) || l === 'Move' || l === 'Move back') f.kind = 'skip';
     else if (/picture|photo|file|image|upload/i.test(l) && f.kind !== 'auto') f.kind = 'files';
     else if (f.col !== 1 && /^\s*(?:cne|wo|work ?order)\s*(?:#|no\.?|number)?\s*$/i.test(l)) f.kind = 'cne';
     if (f.kind === 'agent') f.kind = 'text';
