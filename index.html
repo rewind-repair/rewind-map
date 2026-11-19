@@ -186,7 +186,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.21';
+const APP_VERSION = '3.23';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -902,9 +902,10 @@ function renderParts() {
       '<div class="meta">' + esc(p.pickupName || '') + (p.pickup ? ' · ' + esc(p.pickup) : '') + '</div>' +
       '<div class="small">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') +
         (f && (f.where || f.at) ? ' · ' + esc([f.where, f.at].filter(Boolean).join(' · ')) : '') + '</div>' +
-      (f && f.daysLeft != null && !done(p) ? '<div style="margin-top:6px">' + returnChip(f) +
+      (f && f.daysLeft != null && !f.returned && !done(p) ? '<div style="margin-top:6px">' + returnChip(f) +
         ' <a href="#" class="small" onclick="event.preventDefault();extendHold(\'' + p.tracking + '\',\'' + p.cni + '\')">Extended?</a></div>' : '') +
       (done(p) ? '<div class="act" style="display:block;margin-top:8px;color:var(--green)">Picked up ✅</div>'
+      : f && f.returned ? '<div class="act" style="display:block;margin-top:8px;color:var(--red)">↩ Went back to the shipper — no pickup</div>'
       : '<div class="actions" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
         (p.pickup ? '<a class="act" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(p.pickup) + '">▶ Navigate</a>' : '<span></span>') +
         '<button class="act" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>' +
@@ -917,6 +918,7 @@ function renderParts() {
 let partsShowDone = false;
 function partChip(f) {
   if (!f) return '<span class="chip">No FedEx status</span>';
+  if (f.returned) return '<span class="chip red">↩ Returned to shipper' + (f.returnTracking ? ' · return #' + esc(f.returnTracking) : '') + '</span>';
   if (f.delivered) return '<span class="chip red">⚠ Picked up by ' + esc(f.receivedBy || 'unknown') + '</span>';
   if (f.held) return f.daysLeft != null ? returnChip(f) : '<span class="chip amber">Ready for pickup</span>';
   return '<span class="chip blue">' + esc(f.status) + '</span>';
@@ -1076,55 +1078,158 @@ async function addNote(cni) {
 // ── Barcode scanner (serial / tracking) ───────────────────────────────────
 // BarcodeDetector where the phone has it (Android Chrome); otherwise ZXing from a CDN.
 let scanStop = null;
+// A FedEx tracking number from whatever barcode was read, or '' if it isn't one:
+//  • 12 / 15 digits: the tracking number itself
+//  • 34 digits (Express 1D barcode): the last 12
+//  • 22 digits starting 96 (Ground "96" barcode): the last 15
+//  • PDF417 / 2D (the big square): fields split by GS; the tracking number is a 12- or 15-digit field
+function fedexTracking(raw) {
+  const s = String(raw || '');
+  const d = s.replace(/\D/g, '');
+  if (/^\d+$/.test(s.trim())) {
+    if (d.length === 12 || d.length === 15) return d;
+    if (d.length === 34 || d.length === 32 || d.length === 33) return d.slice(-12);
+    if (d.length === 22 && d.startsWith('96')) return d.slice(-15);
+    if (d.length === 20 || d.length === 21) return d.slice(-12);
+    return '';
+  }
+  const fields = s.split(/[\x1d\x1e\x04]|\|/).map(x => x.trim());
+  const f = fields.find(x => /^\d{12}$/.test(x) || /^\d{15}$/.test(x));
+  if (f) return f;
+  const m = s.match(/(?<!\d)(\d{12}|\d{15})(?!\d)/);
+  return m ? m[1] : '';
+}
+// "S MXL4263VLY", "SN:5CG2201ABC" → serial; part numbers ("P/N …") are skipped
+function serialFrom(raw) {
+  const s = String(raw || '').trim();
+  if (/^(?:p\/?n|part)/i.test(s)) return '';
+  return s.replace(/^(?:s\/?n|serial(?: no\.?)?|s)[\s:#-]*/i, '').replace(/\s+/g, '').toUpperCase();
+}
+const SCAN_FORMATS = ['code_128', 'pdf417', 'code_39', 'code_93', 'itf', 'data_matrix', 'qr_code', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'codabar'];
+async function loadZXing() {
+  if (window.ZXing) return;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('The scanner needs a signal the first time it loads'));
+    document.head.appendChild(s);
+  });
+}
+function zxReader() {
+  const h = new Map();
+  h.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  return new ZXing.BrowserMultiFormatReader(h, 150);
+}
+// Decode every barcode in a still photo (much sharper than video, best for the dense FedEx codes).
+// The photo is drawn on a canvas (max 2000 px) and also tried turned 90°, as labels are often shot sideways.
+async function codesInPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image(); img.src = url; await img.decode();
+    if ('BarcodeDetector' in window) {
+      try { const r = await new BarcodeDetector({ formats: SCAN_FORMATS }).detect(img); if (r.length) return r.map(x => x.rawValue); } catch (e) {}
+    }
+    await loadZXing();
+    // Big photos are shrunk to 2000 px on the long side (phone photos are 4000+); small ones kept as they are
+    const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    const reader = new ZXing.MultiFormatReader();
+    const out = new Set();
+    // A label has several barcodes and a decoder returns one per try: the whole photo, then bands of it
+    const bands = [[0, 1], [0, .4], [.3, .7], [.6, 1], [0, .55], [.45, 1]];
+    for (const turn of [0, 90]) {
+      const W = turn ? h : w, H = turn ? w : h;
+      const full = document.createElement('canvas'); full.width = W; full.height = H;
+      const fg = full.getContext('2d');
+      fg.fillStyle = '#fff'; fg.fillRect(0, 0, W, H);
+      if (turn) { fg.translate(W, 0); fg.rotate(Math.PI / 2); }
+      fg.drawImage(img, 0, 0, w, h);
+      for (const [y0, y1] of bands) {
+        const pad = 40, c = document.createElement('canvas');   // white margin: tightly cropped photos decode too
+        const sy = Math.round(H * y0), sh = Math.round(H * (y1 - y0));
+        c.width = W + 2 * pad; c.height = sh + 2 * pad;
+        const g = c.getContext('2d');
+        g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(full, 0, sy, W, sh, pad, pad, W, sh);
+        try { out.add(reader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c))), hints).getText()); } catch (e) {}
+      }
+      if (out.size) break;
+    }
+    return [...out];
+  } finally { URL.revokeObjectURL(url); }
+}
 async function scanInto(inputId, append) {
   const target = $('#' + inputId);
   if (!target) return;
+  const tracking = /track/i.test(target.closest('label') ? target.closest('label').textContent : '') || /tracking/i.test(append || '');
   const ov = document.createElement('div');
   ov.id = 'scanner';
   ov.setAttribute('style', 'position:fixed;inset:0;z-index:60;background:#000;display:flex;flex-direction:column');
-  ov.innerHTML = '<video playsinline muted style="flex:1;object-fit:cover;width:100%"></video>' +
-    '<div style="position:absolute;left:10%;right:10%;top:40%;height:20%;border:2px solid #d8a86a;border-radius:10px"></div>' +
-    '<div style="padding:14px;display:flex;gap:10px;background:#111"><div style="flex:1;color:#ccc;font-size:14px" id="scan-msg">Point at the barcode…</div>' +
-    '<button class="act" onclick="stopScan()">Cancel</button></div>';
+  ov.innerHTML = '<video playsinline muted style="flex:1;min-height:0;object-fit:cover;width:100%"></video>' +
+    '<div style="position:absolute;left:6%;right:6%;top:34%;height:26%;border:2px solid #d8a86a;border-radius:10px;pointer-events:none"></div>' +
+    '<div style="padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:#111;display:grid;gap:8px">' +
+      '<div style="color:#ccc;font-size:14px" id="scan-msg">' + (tracking ? 'Fill the box with the barcode under "TRK#", or the big square one. Hold steady, 15–25 cm away.' : 'Point at the serial number barcode…') + '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+        '<label class="act" style="margin:0">📸 Photo<input type="file" accept="image/*" capture="environment" style="display:none" id="scan-photo"></label>' +
+        '<button class="act" id="scan-torch">🔦 Light</button>' +
+        '<button class="act" onclick="stopScan()">Cancel</button></div></div>';
   document.body.appendChild(ov);
-  const video = ov.querySelector('video');
-  const done = code => {
+  const video = ov.querySelector('video'), msg = ov.querySelector('#scan-msg');
+  const seen = new Set();
+  let finished = false;
+  // Use a read if it's the kind we want; otherwise keep scanning (a label has several barcodes)
+  const consider = codes => {
+    if (finished) return false;
+    for (const raw of codes) {
+      const v = tracking ? fedexTracking(raw) : serialFrom(raw);
+      if (v && (!tracking || v.length >= 12)) { finish(v); return true; }
+      if (raw && !seen.has(raw)) { seen.add(raw); msg.textContent = 'Read "' + String(raw).replace(/[^\x20-\x7e]/g, ' ').slice(0, 30) + '" — not a ' + (tracking ? 'tracking number' : 'serial') + ', keep going…'; }
+    }
+    return false;
+  };
+  const finish = code => {
+    finished = true;
     stopScan();
-    code = String(code || '').trim();
-    if (!code) return;
-    // FedEx labels: the 34-digit barcode ends with the 12-digit tracking number
-    if (/^\d{22,34}$/.test(code) && /track/i.test(target.closest('label') ? target.closest('label').textContent : '')) code = code.slice(-12);
     target.value = append && target.value.trim() ? target.value.trim() + '\n' + append + code : (append || '') + code;
     target.dispatchEvent(new Event('input', { bubbles: true }));
-    toast('Scanned ' + code);
+    toast('Scanned ' + code + (tracking ? ' · …' + code.slice(-4) : ''), 3500);
   };
+  ov.querySelector('#scan-photo').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    msg.textContent = 'Reading the photo…';
+    try { const codes = await codesInPhoto(f); if (!consider(codes)) msg.textContent = codes.length ? 'That photo has no ' + (tracking ? 'tracking number' : 'serial') + ' barcode — try closer, flat and in focus' : 'No barcode found in that photo — try closer, flat and in focus'; }
+    catch (err) { msg.textContent = err.message; }
+  });
   try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, focusMode: 'continuous' } });
+    video.srcObject = stream; await video.play();
+    const track = stream.getVideoTracks()[0];
+    try { const caps = track.getCapabilities ? track.getCapabilities() : {}; if (caps.focusMode && caps.focusMode.includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+    let torch = false;
+    ov.querySelector('#scan-torch').onclick = async () => { try { torch = !torch; await track.applyConstraints({ advanced: [{ torch }] }); } catch (e) { toast('No light control on this phone'); } };
+    let alive = true;
     if ('BarcodeDetector' in window) {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      video.srcObject = stream; await video.play();
-      const det = new BarcodeDetector({ formats: ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'qr_code', 'data_matrix', 'pdf417'] });
-      let alive = true;
+      const det = new BarcodeDetector({ formats: SCAN_FORMATS });
       scanStop = () => { alive = false; stream.getTracks().forEach(t => t.stop()); };
       const tick = async () => {
-        if (!alive) return;
-        try { const r = await det.detect(video); if (r.length) return done(r[0].rawValue); } catch (e) {}
-        setTimeout(tick, 200);
+        if (!alive || finished) return;
+        try { const r = await det.detect(video); if (r.length && consider(r.map(x => x.rawValue))) return; } catch (e) {}
+        setTimeout(tick, 120);
       };
       tick();
     } else {
-      $('#scan-msg').textContent = 'Loading scanner…';
-      if (!window.ZXing) await new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = 'https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js';
-        s.onload = res; s.onerror = () => rej(new Error('Scanner needs a signal the first time'));
-        document.head.appendChild(s);
-      });
-      $('#scan-msg').textContent = 'Point at the barcode…';
-      const reader = new ZXing.BrowserMultiFormatReader();
-      scanStop = () => { try { reader.reset(); } catch (e) {} };
-      reader.decodeFromConstraints({ video: { facingMode: 'environment' } }, video, (res) => { if (res) done(res.getText()); });
+      msg.textContent = 'Loading scanner…';
+      await loadZXing();
+      msg.textContent = tracking ? 'Fill the box with the barcode under "TRK#", or the big square one. Hold steady.' : 'Point at the serial number barcode…';
+      const reader = zxReader();
+      scanStop = () => { alive = false; try { reader.reset(); } catch (e) {} stream.getTracks().forEach(t => t.stop()); };
+      reader.decodeFromStream(stream, video, res => { if (res && alive) consider([res.getText()]); });
     }
-  } catch (e) { stopScan(); toast(/permission|denied|NotAllowed/i.test(e.message) ? 'Camera blocked — allow it in the browser settings' : e.message, 5000); }
+  } catch (e) {
+    msg.textContent = /permission|denied|NotAllowed/i.test(e.message) ? 'Camera blocked — allow it in the browser settings, or use 📸 Photo' : e.message + ' — use 📸 Photo';
+  }
 }
 function stopScan() { if (scanStop) { try { scanStop(); } catch (e) {} scanStop = null; } const o = $('#scanner'); if (o) o.remove(); }
 const scanBtn = (id, label, append) => '<button type="button" class="act" style="margin-top:6px" onclick="scanInto(\'' + id + '\'' + (append ? ',\'' + append + '\'' : '') + ')">📷 ' + label + '</button>';
