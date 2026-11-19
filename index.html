@@ -93,6 +93,14 @@
   .act { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 6px; text-align: center; font-size: 13px; font-weight: 600; text-decoration: none; color: var(--text); }
   .act:active { background: var(--panel2); }
   .act.primary { background: var(--accent); color: #1b1408; border-color: var(--accent); }
+  .act.on { border-color: var(--accent); color: var(--accent); }
+  .partbox { border: 2px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 8px; background: var(--panel); }
+  .partbox .lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .partbox .trk { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; color: var(--sub); margin-top: 2px; }
+  .partbox .trk b { font-size: 26px; color: var(--accent); letter-spacing: .04em; }
+  .partbox .pn { font-size: 15px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+  .last4 { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; color: var(--accent); }
+  .act:disabled { opacity: .45; }
   .act.wide { grid-column: span 3; padding: 13px; font-size: 15px; }
   .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
   .kv dt { color: var(--dim); } .kv dd { word-break: break-word; }
@@ -157,6 +165,8 @@
   <section class="view hidden" id="view-jobs"></section>
   <section class="view hidden" id="view-map"><div id="map"></div></section>
   <section class="view hidden" id="view-parts"></section>
+  <section class="view hidden" id="view-pay"></section>
+  <section class="view hidden" id="view-admin"></section>
 </main>
 
 <nav>
@@ -164,6 +174,8 @@
   <button data-v="jobs" onclick="show('jobs')"><b>☰</b>Jobs</button>
   <button data-v="map" onclick="show('map')"><b>⌖</b>Map</button>
   <button data-v="parts" onclick="show('parts')"><b>▣</b><span>Parts<span id="parts-badge"></span></span></button>
+  <button data-v="pay" id="nav-pay" class="hidden" onclick="show('pay')"><b>$</b>Pay</button>
+  <button data-v="admin" id="nav-admin" class="hidden" onclick="show('admin')"><b>▤</b>Admin</button>
 </nav>
 
 <div id="toast"></div>
@@ -174,7 +186,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.12';
+const APP_VERSION = '3.21';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -215,8 +227,11 @@ const navUrl = j => j.lat ? 'https://www.google.com/maps/dir/?api=1&destination=
 // ── API ───────────────────────────────────────────────────────────────────
 let session = store.get('rw_session', null);   // { pin, user, techs }
 async function api(op, extra) {
-  const res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action: 'app', op, pin: session && session.pin }, extra || {})) });
-  const j = await res.json();
+  let res, j;
+  try {
+    res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action: 'app', op, pin: session && session.pin }, extra || {})) });
+    j = await res.json();
+  } catch (e) { throw Object.assign(new Error(navigator.onLine ? 'Could not reach the server' : 'No signal'), { offline: true }); }
   if (j.auth) { logout(); throw new Error(j.error || 'Signed out'); }
   if (!j.ok) throw new Error(j.error || 'Something went wrong');
   return j;
@@ -256,6 +271,9 @@ function start() {
       '<option value="' + esc(t.tech) + '">' + esc(t.name) + (t.area ? ' · ' + esc(t.area) : '') + '</option>').join('');
     sel.value = techFilter; sel.classList.remove('hidden');
   } else sel.classList.add('hidden');
+  $('#nav-pay').classList.toggle('hidden', !!u.admin);
+  $('#nav-admin').classList.toggle('hidden', !u.admin);
+  flushQueue();
   const cached = store.get('rw_jobs_' + u.name + '_' + techFilter, null);
   if (cached) { jobs = cached.jobs; lastAt = cached.at; render(); }
   refresh();
@@ -263,7 +281,7 @@ function start() {
   if (pushSupported() && Notification.permission === 'granted') enablePush(true);   // keep the subscription fresh
   clearInterval(start.t); start.t = setInterval(() => { if (!document.hidden) refresh(); }, AUTO_REFRESH_MIN * 60e3);
 }
-function pickTech(t) { techFilter = t; store.set('rw_tech', t); parts = null; refresh(true); }
+function pickTech(t) { techFilter = t; store.set('rw_tech', t); parts = null; refresh(true); if (view === 'admin' && adminTab === 'pay') renderPay(); }
 
 async function refresh(loud) {
   if (!session) return;
@@ -272,6 +290,7 @@ async function refresh(loud) {
   try {
     const j = await api('jobs', { tech: techFilter });
     jobs = j.jobs; lastAt = j.at; offline = false;
+    flushQueue();
     setUnread(j.unread);
     store.set('rw_jobs_' + session.user.name + '_' + techFilter, { jobs, at: lastAt });
     render();
@@ -288,15 +307,18 @@ function stamp(html) {
   if (html) { s.innerHTML = html; s.className = ''; return; }
   const when = lastAt ? new Date(lastAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'never';
   s.className = offline ? 'offline' : '';
-  s.textContent = (offline ? 'Offline — showing jobs from ' : 'Updated ') + when + ' · ' + jobs.length + ' open job' + (jobs.length === 1 ? '' : 's') + ' · v' + APP_VERSION;
+  s.textContent = (offline ? 'Offline — showing jobs from ' : 'Updated ') + when + ' · ' + jobs.length + ' open job' + (jobs.length === 1 ? '' : 's') +
+    (queued ? ' · 📴 ' + queued + ' waiting to send' : '') + ' · v' + APP_VERSION;
 }
 
 // ── Views ─────────────────────────────────────────────────────────────────
 function show(v) {
   view = v;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  ['today', 'jobs', 'map', 'parts'].forEach(x => $('#view-' + x).classList.toggle('hidden', x !== v));
+  ['today', 'jobs', 'map', 'parts', 'pay', 'admin'].forEach(x => $('#view-' + x).classList.toggle('hidden', x !== v));
   $('#main').classList.toggle('split', v === 'today' || v === 'jobs');
+  if (v === 'pay') renderPay();
+  if (v === 'admin') renderAdmin();
   if (v === 'map' || (window.innerWidth >= 900 && (v === 'today' || v === 'jobs'))) { $('#view-map').classList.remove('hidden'); ensureMap(); }
   if (v === 'parts' && parts === null) loadParts();
 }
@@ -317,8 +339,9 @@ function jobCard(j) {
     '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span>' + apptChip(j) + '</div>' +
     '<div class="meta">' + esc([j.address || j.city, j.device].filter(Boolean).join(' · ')) + '</div>' +
     '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
-      (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex ? ' · 📦' : '') +
+      (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') + '</div>' +
+    (j.parts || []).map(p => '<div class="small" style="margin-top:4px">📦 …<span class="last4">' + esc(p.tracking.slice(-4)) + '</span>' + (p.part ? ' · ' + esc(p.part) : '') + '</div>').join('') +
     (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
   '</div>';
 }
@@ -337,7 +360,9 @@ function renderToday() {
   });
   const byDate = (a, b) => (a.appt ? a.appt.date + (a.appt.time || '') : '9') < (b.appt ? b.appt.date + (b.appt.time || '') : '9') ? -1 : 1;
   const sec = (title, list) => list.length ? '<div class="group">' + title + ' · ' + list.length + '</div>' + list.sort(byDate).map(jobCard).join('') : '';
-  el.innerHTML = sec('Today', groups.today) + sec('Past date — reschedule or close', groups.over) + sec('Tomorrow', groups.tomorrow) +
+  const rd = routeDay(), rn = rd ? jobs.filter(j => j.appt && j.appt.date === rd && j.lat).length : 0;
+  const routeBtn = rn ? '<button class="act" style="width:100%;margin:6px 0 2px" onclick="openRoute()">🧭 Route for ' + (rd === t ? 'today' : nice(rd)) + ' · ' + rn + ' stop' + (rn === 1 ? '' : 's') + '</button>' : '';
+  el.innerHTML = routeBtn + sec('Today', groups.today) + sec('Past date — reschedule or close', groups.over) + sec('Tomorrow', groups.tomorrow) +
                  sec('Next 7 days', groups.week) + sec('Later', groups.later) + sec('Not scheduled yet', groups.none);
 }
 function renderJobs() {
@@ -575,20 +600,30 @@ async function prefetchDetails() {
     try { Object.keys(localStorage).filter(k => /^rw_det_/.test(k) && !open.has(k.slice(7))).forEach(k => localStorage.removeItem(k)); } catch (e) {}
   } catch (e) { /* the per-ticket request still works */ }
 }
+// Tracking number with the last 4 digits large: what the tech reads off the box at FedEx
+const trackHtml = t => esc(t.slice(0, -4)) + '<b>' + esc(t.slice(-4)) + '</b>';
+function partsBox(j) {
+  const list = j.parts || [];
+  if (!list.length) return '';
+  return list.map(p => '<div class="partbox"><div class="lbl">📦 Part to bring' + (list.length > 1 ? ' · ' + (list.indexOf(p) + 1) + ' of ' + list.length : '') + '</div>' +
+    '<div class="trk">' + trackHtml(p.tracking) + '</div>' +
+    (p.part ? '<div class="pn">' + esc(p.part) + '</div>' : '<div class="small">Part not named in the note — check the dispatch email below</div>') + '</div>').join('');
+}
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
   return '<div class="card">' +
-      '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
+      '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
       (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
       '<div style="margin-top:6px">' + apptChip(j) + (j.lsdt ? ' <span class="chip amber">SLA ' + esc(j.lsdt) + '</span>' : '') + '</div>' +
-    '</div>' +
+    '</div>' + partsBox(j) +
     '<div class="actions">' +
       '<a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a>' +
       '<span id="dial-slot">' + dialBtn(phones[0]) + '</span>' +
       '<button class="act" onclick="openSchedule(\'' + j.cni + '\')">📅 Schedule</button>' +
     '</div>' +
     (session.user.admin ? '<a class="act" style="display:block;margin-top:8px" href="https://hemmersbach.fieldcode.com/filter?cni=' + esc(j.cni) + '" target="_blank" rel="noopener">⧉ Open in Fieldcode</a>' : '') +
+    visitHtml(j.cni) +
     '<div class="sec"><h3>Log contact attempt <span id="att-count" style="text-transform:none;letter-spacing:0">' + attemptsLabel(j.attempts || 0) + '</span></h3><div class="actions" style="grid-template-columns:repeat(4,1fr)">' +
       ['call|📞 Call', 'voicemail|📼 Voicemail', 'text|💬 Text', 'email|✉️ Email'].map(x => {
         const [k, l] = x.split('|');
@@ -616,7 +651,8 @@ async function logContact(cni, method, btn) {
   if (note === null) return;
   btn.disabled = true;
   try {
-    const r = await api('contact', { cni, method, note });
+    const r = await send('contact', { cni, method, note }, METHOD[method] + ' attempt ' + cni);
+    if (r.queued) { btn.disabled = false; return; }
     const j = jobs.find(x => x.cni === cni); if (j) j.attempts = r.count;
     $('#att-count').innerHTML = attemptsLabel(r.count);
     const list = $('#att-list'); if (list) list.innerHTML = attemptsHtml(r.attempts);
@@ -639,7 +675,8 @@ function kv(obj, skip) {
   return rows.length ? '<dl class="kv">' + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>' : '';
 }
 function detailsHtml(d) {
-  let h = '<div class="sec"><h3>Contact attempts</h3><div id="att-list">' + attemptsHtml(d.attempts || []) + '</div></div>';
+  mergeVisit(d.cni, d.visit);
+  let h = notesHtml(d.cni, d.notes) + '<div class="sec"><h3>Contact attempts</h3><div id="att-list">' + attemptsHtml(d.attempts || []) + '</div></div>';
   const jj = jobs.find(x => x.cni === d.cni); if (jj && d.attempts) { jj.attempts = d.attempts.length; if ($('#att-count')) $('#att-count').innerHTML = attemptsLabel(jj.attempts); }
   h += cardHtml(d.card);
   // A phone number in the dispatch email / note when the job list had none
@@ -721,7 +758,7 @@ async function sendUpdate(cni, kind) {
     if (text === null) return;
     if (kind === 'note' && !text.trim()) return;
   }
-  try { const j = await api('update', { cni, kind, text }); toast('Sent to ' + j.sentTo); }
+  try { const j = await send('update', { cni, kind, text }, 'Teams update ' + cni); if (!j.queued) toast('Sent to ' + j.sentTo); }
   catch (e) { toast(e.message, 4000); }
 }
 
@@ -735,20 +772,24 @@ async function openClosure(cni) {
   fixSchema(schema);
   const yes = v => /^(yes|y|true|successful)$/i.test(String(v || '').trim());
   const draft = store.get('rw_close_' + cni, {});
+  const vis = visitOf(cni) || {};
+  const fromVisit = f => !vis.in ? '' : f.kind === 'date' ? dayOf(vis.in) : f.kind === 'time' && /check.?in/i.test(f.label) ? hhmm(vis.in)
+    : f.kind === 'time' && /check.?out/i.test(f.label) && vis.out ? hhmm(vis.out) : '';
   const field = f => {
     if (f.kind === 'auto' || f.kind === 'auto-email' || f.kind === 'skip' || f.kind === 'cne') return '';
     if (f.kind === 'files') return '<label class="f" data-col="' + f.col + '"><span>' + esc(f.label) + '</span>' +
       '<input class="in" type="file" id="f_' + f.key + '" accept="image/*" multiple onchange="showPicks(this)"><div class="small" id="picks"></div></label>';
     const id = 'f_' + f.key, req = f.required ? ' <i>*</i>' : '';
-    let val = draft[f.key] ?? (f.kind === 'cni' ? cni + (j.wo ? ' / ' + j.wo : '') : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : f.kind === 'date' ? todayISO() : '');
+    let val = draft[f.key] ?? (f.kind === 'cni' ? cni + (j.wo ? ' / ' + j.wo : '') : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : fromVisit(f) || (f.kind === 'date' ? todayISO() : ''));
     let input;
     if (f.kind === 'choice') {
       input = '<div class="seg" data-key="' + f.key + '">' + f.choices.map(c => '<button type="button" class="' + (val === c ? 'on' : '') + '" onclick="segPick(this)">' + esc(c) + '</button>').join('') + '</div>' +
               '<input type="hidden" id="' + id + '" value="' + esc(val) + '">';
-    } else if (f.kind === 'long') input = '<textarea class="in" id="' + id + '">' + esc(val) + '</textarea>';
+    } else if (f.kind === 'long') input = '<textarea class="in" id="' + id + '">' + esc(val) + '</textarea>' +
+        (/diagnos|work done/i.test(f.label) ? scanBtn(id, 'Scan serial', 'Serial: ') : '');
     else {
       const type = f.kind === 'date' ? 'date' : f.kind === 'time' ? 'time' : f.kind === 'datetime' ? 'datetime-local' : f.kind === 'number' ? 'number' : 'text';
-      input = '<input class="in" type="' + type + '" id="' + id + '" value="' + esc(val) + '">';
+      input = '<input class="in" type="' + type + '" id="' + id + '" value="' + esc(val) + '">' + (/track/i.test(f.label) ? scanBtn(id, 'Scan tracking') : '');
     }
     const isFail = f.onlyIfFailed || f.col === schema.failCol;
     return '<label class="f" data-col="' + f.col + '"' + (isFail ? ' data-fail="1"' : '') + '><span>' + esc(f.label) + req + '</span>' + input + '</label>';
@@ -822,9 +863,9 @@ async function submitClosure(cni) {
   try {
     const files = await closureFiles();
     if (files.length) b.innerHTML = '<span class="spin"></span> Uploading ' + files.length + ' photo' + (files.length === 1 ? '' : 's') + '…';
-    await api('close', { cni, values: v, files });
+    const r = await send('close', { cni, values: v, files }, 'closure ' + cni);
     store.del('rw_close_' + cni);
-    toast('Closure submitted ✓', 3500);
+    if (!r.queued) toast('Closure submitted ✓', 3500);
     closeSheet(); history.back();
     jobs = jobs.filter(x => x.cni !== cni); render();
   } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = 'Submit closure'; }
@@ -913,6 +954,345 @@ const DARK = [
   { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3c3c56' }] }, { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1622' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] }, { featureType: 'transit', stylers: [{ visibility: 'off' }] },
 ];
+
+
+// ── Offline queue ─────────────────────────────────────────────────────────
+// Contact attempts, Teams updates, visit times, notes and closures made with no signal are kept
+// on the phone (IndexedDB) and sent, in order, as soon as it's back online.
+const QUEUE_OPS = ['contact', 'update', 'visit', 'note', 'close'];
+const idb = {
+  db: null,
+  open() {
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('rewind-jobs', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true });
+      r.onsuccess = () => { this.db = r.result; res(this.db); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async tx(mode, fn) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('outbox', mode), st = t.objectStore('outbox');
+      const out = fn(st);
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+      t.onerror = () => rej(t.error);
+    });
+  },
+  add(item) { return this.tx('readwrite', st => st.add(item)); },
+  all() { return this.tx('readonly', st => st.getAll()); },
+  del(id) { return this.tx('readwrite', st => st.delete(id)); },
+};
+let queued = 0;
+async function countQueue() { try { queued = (await idb.all()).length; } catch (e) { queued = 0; } stamp(); }
+// Like api(), but a request that can't reach the relay is kept and sent later
+async function send(op, extra, label) {
+  try { return await api(op, extra); }
+  catch (e) {
+    if (!e.offline || !QUEUE_OPS.includes(op)) throw e;
+    await idb.add({ op, extra, label: label || op, at: new Date().toISOString(), user: session.user.name });
+    await countQueue();
+    toast('📴 No signal — saved, will send when you\'re back online', 4000);
+    return { ok: true, queued: true };
+  }
+}
+let flushing = false;
+async function flushQueue() {
+  if (flushing || !session || !navigator.onLine) return;
+  flushing = true;
+  try {
+    const items = (await idb.all()).filter(i => i.user === session.user.name).sort((a, b) => a.id - b.id);
+    let sent = 0;
+    for (const it of items) {
+      try { await api(it.op, it.extra); sent++; await idb.del(it.id); }
+      catch (e) {
+        if (e.offline) break;                                   // still no signal: try again later
+        await idb.del(it.id);
+        toast('Could not send saved ' + it.label + ': ' + e.message, 6000);
+      }
+    }
+    if (sent) toast('📶 Sent ' + sent + ' saved item' + (sent === 1 ? '' : 's'), 3500);
+  } catch (e) { /* IndexedDB unavailable */ }
+  flushing = false;
+  countQueue();
+}
+window.addEventListener('online', () => setTimeout(flushQueue, 1500));
+
+// ── Visit times (Arrived / Done) ──────────────────────────────────────────
+const visitOf = cni => store.get('rw_visit_' + cni, null);
+const hhmm = iso => { const d = new Date(iso); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+const dayOf = iso => { const d = new Date(iso); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const clock = iso => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function visitHtml(cni) {
+  const v = visitOf(cni) || {};
+  return '<div class="sec" id="visit-sec"><h3>Visit <span style="text-transform:none;letter-spacing:0">' +
+      (v.in ? '· in ' + clock(v.in) + (v.out ? ' · out ' + clock(v.out) : ' · on site') : '') + '</span></h3>' +
+    '<div class="actions" style="grid-template-columns:1fr 1fr">' +
+      '<button class="act' + (v.in && !v.out ? ' on' : '') + '" onclick="visit(\'' + cni + '\',\'in\')">📍 Arrived' + (v.in ? ' ' + clock(v.in) : '') + '</button>' +
+      '<button class="act' + (v.out ? ' on' : '') + '" onclick="visit(\'' + cni + '\',\'out\')"' + (v.in ? '' : ' disabled') + '>✅ Done' + (v.out ? ' ' + clock(v.out) : '') + '</button>' +
+    '</div><div class="small" style="margin:6px 2px 0">Fills in the date, check-in and check-out on the closure form.</div></div>';
+}
+async function visit(cni, kind) {
+  const v = visitOf(cni) || {};
+  const at = new Date().toISOString();
+  if (kind === 'in' && v.in && !v.out && !confirm('Already checked in at ' + clock(v.in) + '. Check in again now?')) return;
+  if (kind === 'in') { v.in = at; v.out = ''; } else v.out = at;
+  store.set('rw_visit_' + cni, v);
+  const sec = $('#visit-sec'); if (sec) sec.outerHTML = visitHtml(cni);
+  try { await send('visit', { cni, kind, at }, (kind === 'in' ? 'check-in' : 'check-out') + ' ' + cni); toast(kind === 'in' ? 'Checked in ' + clock(at) : 'Checked out ' + clock(at)); }
+  catch (e) { toast(e.message, 4000); }
+}
+// Server copy (e.g. checked in from another phone) fills a missing local one
+function mergeVisit(cni, sv) {
+  if (!sv || !sv.in) return;
+  const v = visitOf(cni) || {};
+  if (!v.in || Date.parse(sv.in) > Date.parse(v.in)) { store.set('rw_visit_' + cni, { in: sv.in, out: sv.out || '' }); const s = $('#visit-sec'); if (s) s.outerHTML = visitHtml(cni); }
+}
+
+// ── Notes on a ticket ─────────────────────────────────────────────────────
+function notesHtml(cni, list) {
+  return '<div class="sec"><h3>Notes</h3><div id="notes-list">' + notesList(list) + '</div>' +
+    '<textarea class="in" id="note-text" placeholder="Add a note — gate code, parking, who to ask for…" style="margin-top:6px"></textarea>' +
+    '<button class="act" style="width:100%;margin-top:6px" onclick="addNote(\'' + cni + '\')">Save note</button></div>';
+}
+const notesList = list => (list || []).length ? (list || []).slice().reverse().map(n => '<div class="card" style="padding:8px 12px"><div class="small">' +
+  esc(n.who) + ' · ' + esc(new Date(n.time).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })) +
+  (n.pending ? ' · 📴 not sent yet' : '') + '</div><div class="pre">' + linkify(n.text) + '</div></div>').join('') : '<div class="small" style="margin:0 4px">No notes yet.</div>';
+async function addNote(cni) {
+  const text = $('#note-text').value.trim();
+  if (!text) return;
+  const d = store.get('rw_det_' + cni, null);
+  try {
+    const r = await send('note', { cni, text }, 'note ' + cni);
+    const n = r.note || { time: new Date().toISOString(), who: session.user.name, text, pending: !!r.queued };
+    if (d) { d.notes = (d.notes || []).concat([n]); store.set('rw_det_' + cni, d); }
+    $('#notes-list').innerHTML = notesList(d ? d.notes : [n]);
+    $('#note-text').value = '';
+    if (!r.queued) toast('Note saved');
+  } catch (e) { toast(e.message, 4000); }
+}
+
+// ── Barcode scanner (serial / tracking) ───────────────────────────────────
+// BarcodeDetector where the phone has it (Android Chrome); otherwise ZXing from a CDN.
+let scanStop = null;
+async function scanInto(inputId, append) {
+  const target = $('#' + inputId);
+  if (!target) return;
+  const ov = document.createElement('div');
+  ov.id = 'scanner';
+  ov.setAttribute('style', 'position:fixed;inset:0;z-index:60;background:#000;display:flex;flex-direction:column');
+  ov.innerHTML = '<video playsinline muted style="flex:1;object-fit:cover;width:100%"></video>' +
+    '<div style="position:absolute;left:10%;right:10%;top:40%;height:20%;border:2px solid #d8a86a;border-radius:10px"></div>' +
+    '<div style="padding:14px;display:flex;gap:10px;background:#111"><div style="flex:1;color:#ccc;font-size:14px" id="scan-msg">Point at the barcode…</div>' +
+    '<button class="act" onclick="stopScan()">Cancel</button></div>';
+  document.body.appendChild(ov);
+  const video = ov.querySelector('video');
+  const done = code => {
+    stopScan();
+    code = String(code || '').trim();
+    if (!code) return;
+    // FedEx labels: the 34-digit barcode ends with the 12-digit tracking number
+    if (/^\d{22,34}$/.test(code) && /track/i.test(target.closest('label') ? target.closest('label').textContent : '')) code = code.slice(-12);
+    target.value = append && target.value.trim() ? target.value.trim() + '\n' + append + code : (append || '') + code;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    toast('Scanned ' + code);
+  };
+  try {
+    if ('BarcodeDetector' in window) {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = stream; await video.play();
+      const det = new BarcodeDetector({ formats: ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'qr_code', 'data_matrix', 'pdf417'] });
+      let alive = true;
+      scanStop = () => { alive = false; stream.getTracks().forEach(t => t.stop()); };
+      const tick = async () => {
+        if (!alive) return;
+        try { const r = await det.detect(video); if (r.length) return done(r[0].rawValue); } catch (e) {}
+        setTimeout(tick, 200);
+      };
+      tick();
+    } else {
+      $('#scan-msg').textContent = 'Loading scanner…';
+      if (!window.ZXing) await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js';
+        s.onload = res; s.onerror = () => rej(new Error('Scanner needs a signal the first time'));
+        document.head.appendChild(s);
+      });
+      $('#scan-msg').textContent = 'Point at the barcode…';
+      const reader = new ZXing.BrowserMultiFormatReader();
+      scanStop = () => { try { reader.reset(); } catch (e) {} };
+      reader.decodeFromConstraints({ video: { facingMode: 'environment' } }, video, (res) => { if (res) done(res.getText()); });
+    }
+  } catch (e) { stopScan(); toast(/permission|denied|NotAllowed/i.test(e.message) ? 'Camera blocked — allow it in the browser settings' : e.message, 5000); }
+}
+function stopScan() { if (scanStop) { try { scanStop(); } catch (e) {} scanStop = null; } const o = $('#scanner'); if (o) o.remove(); }
+const scanBtn = (id, label, append) => '<button type="button" class="act" style="margin-top:6px" onclick="scanInto(\'' + id + '\'' + (append ? ',\'' + append + '\'' : '') + ')">📷 ' + label + '</button>';
+
+// ── Route for the day ─────────────────────────────────────────────────────
+const toRad = x => x * Math.PI / 180;
+function miles(a, b) {
+  const R = 3958.8, dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+// Nearest neighbour from the start, then 2-opt until nothing improves
+function orderStops(start, stops) {
+  let rest = stops.slice(), cur = start || rest[0], route = [];
+  if (!start) { route.push(rest.shift()); cur = route[0]; }
+  while (rest.length) {
+    let bi = 0; rest.forEach((s, i) => { if (miles(cur, s) < miles(cur, rest[bi])) bi = i; });
+    cur = rest.splice(bi, 1)[0]; route.push(cur);
+  }
+  const pts = start ? [start].concat(route) : route.slice();
+  const len = p => p.slice(1).reduce((s, x, i) => s + miles(p[i], x), 0);
+  let better = true;
+  while (better) {
+    better = false;
+    for (let i = 1; i < pts.length - 1; i++) for (let k = i + 1; k < pts.length; k++) {
+      const cand = pts.slice(0, i).concat(pts.slice(i, k + 1).reverse(), pts.slice(k + 1));
+      if (len(cand) + 0.01 < len(pts)) { pts.splice(0, pts.length, ...cand); better = true; }
+    }
+  }
+  return start ? pts.slice(1) : pts;
+}
+function hereNow() {
+  return new Promise(res => {
+    if (!navigator.geolocation) return res(null);
+    navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(null), { timeout: 6000, maximumAge: 300000 });
+  });
+}
+function routeDay() {
+  const t = todayISO();
+  const days = [...new Set(jobs.filter(j => j.appt && j.appt.date >= t && j.lat).map(j => j.appt.date))].sort();
+  return days[0] || null;
+}
+async function openRoute() {
+  const day = routeDay();
+  if (!day) { toast('No scheduled jobs with an address yet'); return; }
+  const stops = jobs.filter(j => j.appt && j.appt.date === day && j.lat);
+  sheet('Route · ' + (day === todayISO() ? 'Today' : nice(day)), '<div class="empty"><span class="spin"></span> Finding the shortest order…</div>');
+  const here = await hereNow();
+  const order = orderStops(here, stops);
+  let total = 0, prev = here;
+  const rows = order.map((j, i) => {
+    const leg = prev ? miles(prev, j) : 0; total += leg; prev = j;
+    return '<div class="card job" onclick="closeSheet();openJob(\'' + j.cni + '\')"><div class="row between"><span class="co">' + (i + 1) + '. ' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span>' + apptChip(j) + '</div>' +
+      '<div class="meta">' + esc(j.address || j.city || '') + '</div>' +
+      '<div class="small">' + (prev && (i || here) ? '≈ ' + leg.toFixed(1) + ' mi' + (i === 0 ? ' from you' : ' from stop ' + i) + ' · ' : '') + 'CNI ' + esc(j.cni) + '</div></div>';
+  });
+  const pt = j => j.lat + ',' + j.lng;
+  const legs = [];                                          // Google Maps takes up to 9 stops between start and end
+  for (let i = 0; i < order.length; i += 10) legs.push(order.slice(i, i + 10));
+  const links = legs.map((g, n) => {
+    const dest = g[g.length - 1], way = g.slice(0, -1);
+    const origin = n === 0 ? (here ? pt(here) : '') : pt(legs[n - 1][legs[n - 1].length - 1]);
+    return '<a class="act primary" style="display:block;margin-top:8px;text-align:center" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&travelmode=driving' +
+      (origin ? '&origin=' + origin : '') + '&destination=' + pt(dest) + (way.length ? '&waypoints=' + way.map(pt).join('|') : '') + '">▶ Open ' +
+      (legs.length > 1 ? 'part ' + (n + 1) + ' (stops ' + (n * 10 + 1) + '–' + (n * 10 + g.length) + ')' : 'route') + ' in Google Maps</a>';
+  }).join('');
+  const timed = order.filter(j => j.appt && j.appt.time).length;
+  $('#sheet-body').innerHTML = '<div class="card"><b>' + order.length + ' stop' + (order.length === 1 ? '' : 's') + '</b> · ≈ ' + total.toFixed(0) + ' mi straight-line' +
+      (here ? ' from where you are' : '') + (timed ? '<div class="small" style="margin-top:4px">⚠ ' + timed + ' stop' + (timed === 1 ? ' has' : 's have') + ' a set time — check the order against them.</div>' : '') + '</div>' +
+    links + '<div style="margin-top:12px">' + rows.join('') + '</div>';
+}
+
+// ── Pay this period (tech) ────────────────────────────────────────────────
+let payOffset = 0;
+async function renderPay() {
+  const el = view === 'admin' ? $('#admin-body') : $('#view-pay');
+  if (!el || (view !== 'pay' && !(view === 'admin' && adminTab === 'pay'))) return;
+  if (session.user.admin && techFilter === 'ALL') { el.innerHTML = '<div class="empty">Pick a tech at the top to see their pay estimate</div>'; return; }
+  el.innerHTML = '<div class="empty"><span class="spin"></span> Adding up your closures…</div>';
+  try {
+    const p = await api('pay', { offset: payOffset, tech: techFilter });
+    const kind = { computer: 'Computer', printer: 'Printer', trip: 'Trip' };
+    el.innerHTML = '<div class="row between" style="margin:8px 4px"><button class="act" onclick="payOffset++;renderPay()">‹ Earlier</button>' +
+        '<b>' + esc(p.period.label) + '</b><button class="act" onclick="payOffset=Math.max(0,payOffset-1);renderPay()"' + (payOffset ? '' : ' disabled') + '>Later ›</button></div>' +
+      '<div class="card"><div class="row between"><span class="co">Estimated pay' + (session.user.admin ? ' · ' + esc(p.tech) : '') + '</span><b style="font-size:22px">$' + p.total + '</b></div>' +
+        '<div class="small" style="margin-top:4px">' + p.counts.computer + ' computer · ' + p.counts.printer + ' printer · ' + p.counts.trip + ' trip</div></div>' +
+      (p.items.length ? p.items.map(i => '<div class="card job" onclick="openJob(\'' + i.cni + '\')"><div class="row between"><span class="co">' + esc(i.company || 'CNI ' + i.cni) + '</span><b>$' + i.pay + '</b></div>' +
+        '<div class="small">' + esc(nice(i.day)) + ' · CNI ' + esc(i.cni) + ' · ' + kind[i.kind] + (i.ok ? '' : ' · not fixed') + (i.dup ? ' · <span style="color:var(--amber)">another visit this period</span>' : '') + '</div></div>').join('')
+        : '<div class="empty">No closures in this period yet</div>') +
+      '<div class="small" style="margin:10px 4px">' + esc(p.note) + '</div>';
+  } catch (e) { el.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+
+// ── Admin: dashboard, search, scorecards ──────────────────────────────────
+let adminTab = store.get('rw_admin_tab', 'dash'), searchQ = '', searchT = null, scoreDays = 60;
+function renderAdmin() {
+  const el = $('#view-admin');
+  if (!el || view !== 'admin') return;
+  el.innerHTML = '<div class="seg" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
+    '<button class="' + (adminTab === k ? 'on' : '') + '" onclick="adminTab=\'' + k + '\';store.set(\'rw_admin_tab\',adminTab);renderAdmin()">' + l + '</button>').join('') + '</div><div id="admin-body"></div>';
+  if (adminTab === 'dash') renderDash(); else if (adminTab === 'search') renderSearch(); else if (adminTab === 'pay') renderPay(); else renderScores();
+}
+const jobRow = (r, extra) => '<div class="card job" onclick="openJob(\'' + r.cni + '\')"><div class="row between"><span class="co">' + esc(r.company || 'CNI ' + r.cni) + '</span><b>' + esc(r.tech) + '</b></div>' +
+  '<div class="small">CNI ' + esc(r.cni) + (r.city ? ' · ' + esc(r.city) : '') + (extra ? ' · ' + extra : '') + '</div></div>';
+async function renderDash() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  try {
+    const d = await api('dashboard');
+    const th = 'style="text-align:right;padding:4px 6px"';
+    const cell = (v, warn) => '<td ' + th + '>' + (v ? '<span style="color:var(--' + (warn ? 'red' : 'text') + ')">' + v + '</span>' : '<span style="color:var(--sub)">0</span>') + '</td>';
+    const table = '<div class="card" style="overflow-x:auto;padding:8px"><table style="width:100%;border-collapse:collapse;font-size:13px">' +
+      '<tr style="color:var(--sub);font-size:11px"><td style="padding:4px 6px">Tech</td><td ' + th + '>Open</td><td ' + th + '>Today</td><td ' + th + '>Not sched.</td><td ' + th + '>No contact</td><td ' + th + '>Past SLA</td><td ' + th + '>Stale</td></tr>' +
+      d.techs.map(t => '<tr style="border-top:1px solid var(--line)"><td style="padding:4px 6px"><a href="#" onclick="event.preventDefault();pickTech(\'' + esc(t.tech) + '\');$(\'#tech-pick\').value=\'' + esc(t.tech) + '\';show(\'jobs\')"><b>' + esc(t.tech) + '</b></a></td>' +
+        cell(t.open) + cell(t.today) + cell(t.unscheduled) + cell(t.uncontacted, 1) + cell(t.pastLsdt, 1) + cell(t.stale, 1) + '</tr>').join('') + '</table></div>';
+    const lsdt = r => { const t = Date.parse(r.lsdt); return isNaN(t) ? '' : 'SLA ' + new Date(t).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+    const sec = (title, list, extra) => list.length ? '<div class="group">' + title + ' · ' + list.length + '</div>' + list.slice(0, 25).map(r => jobRow(r, extra(r))).join('') : '';
+    box.innerHTML = '<div class="small" style="margin:0 4px 6px">' + d.total + ' open jobs</div>' + table +
+      sec('⏰ Past SLA, not scheduled ahead', d.lists.pastLsdt, lsdt) +
+      sec('⏳ SLA in the next 24 h, not scheduled', d.lists.lsdtSoon, lsdt) +
+      sec('📞 3+ contact attempts', d.lists.attempts3, r => r.attempts + ' attempts') +
+      sec('🆕 Not scheduled and no contact logged', d.lists.uncontacted, r => r.idleDays != null ? r.idleDays + ' d since last activity' : '') +
+      sec('💤 No update in ' + d.staleDays + '+ days', d.lists.stale, r => r.idleDays + ' days') +
+      (d.partsDue.length ? '<div class="group">📦 Parts at their last pickup day · ' + d.partsDue.length + '</div>' + d.partsDue.map(p =>
+        '<div class="card job" onclick="openJob(\'' + p.cni + '\')"><div class="row between"><span class="co">' + esc(p.where || p.tracking) + '</span><b>' + esc(p.tech) + '</b></div>' +
+        '<div class="small">' + esc(p.tracking) + ' · CNI ' + esc(p.cni) + ' · ' + (p.daysLeft < 0 ? 'past last pickup day' : p.daysLeft === 0 ? 'last day today' : 'last day tomorrow') + '</div></div>').join('') : '');
+  } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+function renderSearch() {
+  $('#admin-body').innerHTML = '<input class="search" id="sq" placeholder="CNI, WO, customer, address, serial, tracking…" value="' + esc(searchQ) + '" oninput="searchQ=this.value;clearTimeout(searchT);searchT=setTimeout(runSearch,500)">' +
+    '<div class="small" style="margin:4px 4px 8px">Open jobs and closures from the last few months · NSA work orders too</div><div id="sres"></div>';
+  $('#sq').focus();
+  if (searchQ.trim().length >= 3) runSearch();
+}
+async function runSearch() {
+  const box = $('#sres'); if (!box) return;
+  const q = searchQ.trim();
+  if (q.length < 3) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  try {
+    const r = (await api('search', { q })).results;
+    if (searchQ.trim() !== q) return;
+    box.innerHTML = r.length ? r.map(x => '<div class="card job"' + (x.cni ? ' onclick="openJob(\'' + x.cni + '\')"' : '') + '><div class="row between"><span class="co">' + esc(x.company || (x.nsa ? 'NSA ' + x.nsa : 'CNI ' + x.cni)) + '</span>' +
+      (x.open ? '<span class="chip green">Open</span>' : '<span class="chip">Closed' + (x.closed && x.closed.day ? ' ' + esc(shortDate(x.closed.day + 'T12:00')) : '') + '</span>') + '</div>' +
+      '<div class="small">' + (x.nsa ? 'NSA ' + esc(x.nsa) : 'CNI ' + esc(x.cni)) + (x.tech ? ' · ' + esc(x.tech) : '') + (x.city ? ' · ' + esc(x.city) : '') + '</div>' +
+      '<div class="small" style="margin-top:2px;color:var(--sub)">' + esc(x.match) + '</div></div>').join('') : '<div class="empty">Nothing found</div>';
+  } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+async function renderScores() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="seg" style="margin:0 4px 10px">' + [30, 60, 90].map(n => '<button class="' + (scoreDays === n ? 'on' : '') + '" onclick="scoreDays=' + n + ';renderScores()">' + n + ' days</button>').join('') +
+    '</div><div id="scores"><div class="empty"><span class="spin"></span></div></div>';
+  try {
+    const d = await api('scorecards', { days: scoreDays });
+    const v = (x, unit) => x == null ? '<span style="color:var(--sub)">–</span>' : x + (unit || '');
+    $('#scores').innerHTML = d.cards.length ? d.cards.map(c => '<div class="card"><div class="row between"><span class="co">' + esc(c.name) + '</span><b>' + esc(c.tech) + '</b></div>' +
+      '<dl class="kv" style="margin-top:6px">' +
+        '<dt>Jobs closed</dt><dd>' + c.jobs + (c.trips ? ' (' + c.trips + ' trip' + (c.trips === 1 ? '' : 's') + ')' : '') + '</dd>' +
+        '<dt>First-time fix</dt><dd>' + v(c.ftfRate, '%') + '</dd>' +
+        '<dt>Days to schedule</dt><dd>' + v(c.daysToSchedule) + '</dd>' +
+        '<dt>Days to first visit</dt><dd>' + v(c.daysToVisit) + '</dd>' +
+        '<dt>Days to close</dt><dd>' + v(c.daysToClose) + '</dd>' +
+        '<dt>Parts returned (tracking given)</dt><dd>' + v(c.returnRate, '%') + (c.partsUsed ? ' of ' + c.partsUsed : '') + '</dd>' +
+      '</dl></div>').join('') + '<div class="small" style="margin:8px 4px">From closure forms in the last ' + d.days + ' days. Days are counted from when the job was dispatched. ' +
+      '"Days to schedule" only covers jobs scheduled with the app\'s 📅 button.</div>'
+      : '<div class="empty">No closures in this window</div>';
+  } catch (e) { $('#scores').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 window.addEventListener('online', () => refresh());
