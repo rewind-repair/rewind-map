@@ -174,7 +174,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.11';
+const APP_VERSION = '3.12';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -564,13 +564,16 @@ async function openJob(cni) {
     if ($('#det')) $('#det').innerHTML = detailsHtml(d);
   } catch (e) { if ($('#det') && !seen) $('#det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 }
-// Fetch details for today's jobs in the background so opening them is instant
+// Every job's details in one request after the list loads, so opening any ticket is instant
+// (the fresh copy still loads behind it). Old copies of finished jobs are cleared out.
 async function prefetchDetails() {
-  const t = todayISO(), list = jobs.filter(j => j.appt && j.appt.date <= addDays(t, 1)).slice(0, 8);
-  for (const j of list) {
-    if (document.hidden || $('#sheet')) return;
-    try { store.set('rw_det_' + j.cni, (await api('details', { cni: j.cni })).details); } catch (e) { return; }
-  }
+  if (document.hidden) return;
+  try {
+    const all = (await api('detailsall', { tech: techFilter })).details || {};
+    Object.keys(all).forEach(c => store.set('rw_det_' + c, all[c]));
+    const open = new Set(jobs.map(j => j.cni));
+    try { Object.keys(localStorage).filter(k => /^rw_det_/.test(k) && !open.has(k.slice(7))).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  } catch (e) { /* the per-ticket request still works */ }
 }
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
