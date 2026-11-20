@@ -154,6 +154,14 @@
   #toast { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 200;
            background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: 90vw; opacity: 0; transition: opacity .2s; pointer-events: none; }
   #toast.show { opacity: 1; }
+  #flash { position: fixed; inset: 0; z-index: 210; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  #flash .box { background: rgba(20,20,30,.94); color: #fff; border-radius: 18px; padding: 22px 28px; text-align: center; min-width: 180px;
+                box-shadow: 0 8px 30px rgba(0,0,0,.4); animation: flashIn .18s ease-out; transition: opacity .35s, transform .35s; }
+  #flash .box.out { opacity: 0; transform: scale(.94); }
+  #flash .ic { font-size: 40px; line-height: 1; }
+  #flash .t { font-size: 17px; font-weight: 700; margin-top: 8px; }
+  #flash .s { font-size: 13px; color: #bbb; margin-top: 3px; }
+  @keyframes flashIn { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
   .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s .8s linear infinite; vertical-align: -2px; }
   @keyframes s { to { transform: rotate(360deg); } }
 </style>
@@ -209,7 +217,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.38';
+const APP_VERSION = '3.39';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -223,6 +231,16 @@ const store = {
 function toast(msg, ms) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), ms || 2600);
+}
+// Big centred confirmation that fades out on its own ("✅ Message sent")
+function flash(title, sub, icon) {
+  let f = $('#flash');
+  if (!f) { f = document.createElement('div'); f.id = 'flash'; document.body.appendChild(f); }
+  f.innerHTML = '<div class="box"><div class="ic">' + (icon || '✅') + '</div><div class="t">' + esc(title) + '</div>' + (sub ? '<div class="s">' + esc(sub) + '</div>' : '') + '</div>';
+  try { navigator.vibrate && navigator.vibrate(40); } catch (e) {}
+  clearTimeout(flash.t1); clearTimeout(flash.t2);
+  flash.t1 = setTimeout(() => { const b = f.querySelector('.box'); if (b) b.classList.add('out'); }, 1600);
+  flash.t2 = setTimeout(() => { f.innerHTML = ''; }, 2000);
 }
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
@@ -486,7 +504,7 @@ function jobPin(j, fill, tag) {
 function mapLegend(m, byTech) {
   const box = document.createElement('div');
   box.className = 'map-legend';
-  const open = store.get('rw_legend', true);
+  const open = store.get('rw_legend', false);
   const sw = (c, l) => '<span><i style="background:' + c + '"></i>' + l + '</span>';
   box.innerHTML = '<b onclick="const o=!this.parentElement.classList.toggle(\'shut\');store.set(\'rw_legend\',o)">Legend ▾</b><div>' +
     (byTech ? '<span>Colour = tech</span>' : sw(STATUS_FILL.today, 'Today') + sw(STATUS_FILL.soon, 'Upcoming') + sw(STATUS_FILL.over, 'Past date') + sw(STATUS_FILL.none, 'Not scheduled')) +
@@ -621,7 +639,7 @@ async function doSchedule(cni) {
   const b = $('#sc-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
   try {
     const r = await api('schedule', { cni, date, time: $('#sc-time').value.trim(), name, note: $('#sc-note').value.trim(), confirmed: true });
-    toast('Posted: ' + r.posted, 4000);
+    flash('Scheduled', r.posted, '📅');
     const j = jobs.find(x => x.cni === cni); if (j) j.appt = { date, time: $('#sc-time').value.trim() };
     render(); closeSheet(); history.back(); refresh();
   } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = '📅 Schedule'; }
@@ -656,7 +674,7 @@ async function messageTech(cni, kind) {
   if (text === null) return;
   if (kind === 'message' && !text.trim()) return;
   const teams = confirm('Also post it in the tech\'s Teams chat?');
-  try { await api('notifytech', { cni, kind, text, teams }); toast(kind === 'update' ? 'Update requested' : 'Message sent'); }
+  try { await api('notifytech', { cni, kind, text, teams }); flash(kind === 'update' ? 'Update requested' : 'Message sent', teams ? 'App + Teams' : 'In the app'); }
   catch (e) { toast(e.message, 4000); }
 }
 
@@ -899,7 +917,13 @@ async function sendUpdate(cni, kind) {
     if (text === null) return;
     if (kind === 'note' && !text.trim()) return;
   }
-  try { const j = await send('update', { cni, kind, text }, 'Teams update ' + cni); if (!j.queued) toast('Sent to ' + j.sentTo); }
+  toast('Sending…', 8000);
+  try {
+    const j = await send('update', { cni, kind, text }, 'Teams update ' + cni);
+    $('#toast').classList.remove('show');
+    if (j.queued) flash('Saved — no signal', 'It sends when you\'re back online', '📴');
+    else flash('Message sent', j.sentTo ? 'to ' + j.sentTo : '');
+  }
   catch (e) { toast(e.message, 4000); }
 }
 
@@ -1734,7 +1758,7 @@ async function nudge(tracking, btn) {
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
   try {
     const r = await api('nudge', { tracking, text });
-    toast('Nudged ' + techName(r.tech) + (r.teams ? ' · app + Teams' : ' · app'), 3500);
+    flash('Nudge sent', 'to ' + techName(r.tech) + (r.teams ? ' · app + Teams' : ' · app'), '🔔');
     btn.textContent = '✓ Nudged';
     const n = $('#pwn-' + tracking); if (n) n.textContent = 'Nudged just now by ' + session.user.name;
   } catch (e) { toast(e.message, 5000); btn.disabled = false; btn.textContent = '🔔 Nudge'; }
