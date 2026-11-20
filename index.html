@@ -94,6 +94,21 @@
   .act:active { background: var(--panel2); }
   .act.primary { background: var(--accent); color: #1b1408; border-color: var(--accent); }
   .act.on { border-color: var(--accent); color: var(--accent); }
+  .sheet-foot { display: grid; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: var(--panel); border-top: 1px solid var(--line); }
+  .note-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 6px; }
+  .note-row textarea#note-text { flex: 1; min-height: 42px; height: 42px; resize: none; overflow: hidden; padding-top: 10px; padding-bottom: 10px; }
+  .note-row .act { padding: 11px 16px; }
+  .loc { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); margin-bottom: 10px; overflow: hidden; }
+  .loc-head { padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel2); }
+  .loc-head .co { font-size: 15px; }
+  .loc-part { padding: 10px 14px; border-top: 1px solid var(--line); }
+  .loc-part:first-of-type { border-top: none; }
+  #menu-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
+  #menu { background: var(--panel); border-radius: 16px 16px 0 0; width: 100%; max-width: 560px; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); }
+  #menu .mt { font-size: 13px; color: var(--sub); margin: 0 4px 10px; }
+  #menu .actions { grid-template-columns: 1fr 1fr; }
+  #menu .act { padding: 14px 8px; font-size: 15px; }
+  .act .sub { display: block; font-size: 11px; font-weight: 500; color: var(--sub); margin-top: 2px; }
   .partbox { border: 2px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 8px; background: var(--panel); }
   .partbox .lbl { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
   .partbox .trk { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; color: var(--sub); margin-top: 2px; }
@@ -186,7 +201,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.23';
+const APP_VERSION = '3.31';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -582,7 +597,8 @@ async function openJob(cni) {
   const j = jobs.find(x => x.cni === cni) || { cni };
   // Last copy from this phone shows at once; the fresh one replaces it when it arrives
   const seen = store.get('rw_det_' + cni, null);
-  sheet(esc(j.company || 'CNI ' + cni), jobTop(j) + '<div id="det">' + (seen ? detailsHtml(seen) : '<div class="empty"><span class="spin"></span> Loading details…</div>') + '</div>');
+  const sh = sheet(esc(j.company || 'CNI ' + cni), jobTop(j) + '<div id="det">' + (seen ? detailsHtml(seen) : '<div class="empty"><span class="spin"></span> Loading details…</div>') + '</div>');
+  sh.insertAdjacentHTML('beforeend', jobFoot(j));
   try {
     const d = (await api('details', { cni })).details;
     store.set('rw_det_' + cni, d);
@@ -622,28 +638,63 @@ function jobTop(j) {
       '<span id="dial-slot">' + dialBtn(phones[0]) + '</span>' +
       '<button class="act" onclick="openSchedule(\'' + j.cni + '\')">📅 Schedule</button>' +
     '</div>' +
-    (session.user.admin ? '<a class="act" style="display:block;margin-top:8px" href="https://hemmersbach.fieldcode.com/filter?cni=' + esc(j.cni) + '" target="_blank" rel="noopener">⧉ Open in Fieldcode</a>' : '') +
-    visitHtml(j.cni) +
-    '<div class="sec"><h3>Log contact attempt <span id="att-count" style="text-transform:none;letter-spacing:0">' + attemptsLabel(j.attempts || 0) + '</span></h3><div class="actions" style="grid-template-columns:repeat(4,1fr)">' +
-      ['call|📞 Call', 'voicemail|📼 Voicemail', 'text|💬 Text', 'email|✉️ Email'].map(x => {
-        const [k, l] = x.split('|');
-        return '<button class="act" onclick="logContact(\'' + j.cni + '\',\'' + k + '\',this)">' + l + '</button>';
-      }).join('') +
-    '</div></div>' +
-    '<div class="sec"><h3>Send update to Teams</h3><div class="actions">' +
-      ['onway|🚗 On my way', 'arrived|📍 Arrived', 'late|⏰ Late', 'parts|🔧 Need parts', 'done|✅ Work done', 'note|💬 Message'].map(x => {
-        const [k, l] = x.split('|');
-        return '<button class="act" onclick="sendUpdate(\'' + j.cni + '\',\'' + k + '\')">' + l + '</button>';
-      }).join('') +
-    '</div></div>' +
-    (session.user.admin ? '<div class="sec"><h3>Admin → ' + esc(j.tech || 'tech') + '</h3><div class="actions" style="grid-template-columns:1fr 1fr">' +
-      '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'message\')">💬 Message tech</button>' +
-      '<button class="act" onclick="messageTech(\'' + j.cni + '\',\'update\')">🔄 Request update</button>' +
-      '<button class="act" style="grid-column:span 2" onclick="openReassign(\'' + j.cni + '\')">↪ Reassign to another tech</button></div></div>' : '') +
-    '<div class="sec"><button class="act primary wide" style="width:100%" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button></div>';
+    '<div class="actions" style="margin-top:8px">' +
+      visitHtml(j.cni) +
+      '<button class="act" onclick="contactMenu(\'' + j.cni + '\')">📞 Contact<span class="sub" id="att-count">' + attemptsLabel(j.attempts || 0) + '</span></button>' +
+      '<button class="act" onclick="teamsMenu(\'' + j.cni + '\')">💬 Update<span class="sub">to Teams</span></button>' +
+    '</div>' +
+    '';
+}
+// Pinned to the bottom of the ticket screen, always one tap away
+function jobFoot(j) {
+  return '<div class="sheet-foot" style="grid-template-columns:' + (session.user.admin ? '2fr 1fr' : '1fr') + '">' +
+    '<button class="act primary" style="padding:13px;font-size:15px" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button>' +
+    (session.user.admin ? '<button class="act" onclick="adminMenu(\'' + j.cni + '\')">⚙ Admin</button>' : '') +
+  '</div>';
 }
 function attemptsLabel(n) {
-  return n ? '· <span style="color:var(--' + (n >= 3 ? 'red' : 'amber') + ')">' + n + ' so far' + (n >= 3 ? ' — flagged' : '') + '</span>' : '';
+  return n ? '<span style="color:var(--' + (n >= 3 ? 'red' : 'amber') + ')">' + n + ' attempt' + (n === 1 ? '' : 's') + (n >= 3 ? ' · flagged' : '') + '</span>' : 'log attempt';
+}
+// ── Pop-up menus (keep the ticket screen short) ───────────────────────────
+function menu(title, items) {
+  closeMenu();
+  const bg = document.createElement('div');
+  bg.id = 'menu-bg';
+  bg.onclick = e => { if (e.target === bg) closeMenu(); };
+  bg.innerHTML = '<div id="menu"><div class="mt">' + title + '</div><div class="actions">' +
+    items.map((it, n) => it.href
+      ? '<a class="act" href="' + it.href + '" target="_blank" rel="noopener" onclick="closeMenu()">' + it.label + '</a>'
+      : '<button class="act' + (it.on ? ' on' : '') + '"' + (it.disabled ? ' disabled' : '') + (it.wide ? ' style="grid-column:span 2"' : '') + ' data-n="' + n + '">' + it.label + (it.sub ? '<span class="sub">' + it.sub + '</span>' : '') + '</button>').join('') +
+    '</div><button class="act" style="width:100%;margin-top:8px" onclick="closeMenu()">Cancel</button></div>';
+  document.body.appendChild(bg);
+  bg.querySelectorAll('button[data-n]').forEach(b => b.onclick = () => { closeMenu(); items[+b.dataset.n].fn(b); });
+}
+function closeMenu() { const m = $('#menu-bg'); if (m) m.remove(); }
+function visitMenu(cni) {
+  const v = visitOf(cni) || {};
+  menu('Visit · fills date, check-in and check-out on the closure form', [
+    { label: '📍 Arrived', sub: v.in ? 'in ' + clock(v.in) : 'check in now', on: v.in && !v.out, fn: () => visit(cni, 'in') },
+    { label: '✅ Done', sub: v.out ? 'out ' + clock(v.out) : v.in ? 'check out now' : 'check in first', on: !!v.out, disabled: !v.in, fn: () => visit(cni, 'out') },
+  ]);
+}
+function contactMenu(cni) {
+  const j = jobs.find(x => x.cni === cni) || {};
+  menu('Log a contact attempt' + (j.attempts ? ' · ' + j.attempts + ' so far' + (j.attempts >= 3 ? ' (flagged)' : '') : '') + (j.lastAttempt ? ' · last ' + esc(j.lastAttempt.method || '') + ' ' + esc(shortDate(j.lastAttempt.time)) : ''),
+    Object.keys(METHOD).map(k => ({ label: METHOD[k], fn: b => logContact(cni, k, b) })));
+}
+function teamsMenu(cni) {
+  menu('Send an update to Teams',
+    ['onway|🚗 On my way', 'arrived|📍 Arrived', 'late|⏰ Late', 'parts|🔧 Need parts', 'done|✅ Work done', 'note|💬 Message']
+      .map(x => { const [k, l] = x.split('|'); return { label: l, fn: () => sendUpdate(cni, k) }; }));
+}
+function adminMenu(cni) {
+  const j = jobs.find(x => x.cni === cni) || {};
+  menu('Admin → ' + esc(j.tech || 'tech'), [
+    { label: '💬 Message tech', fn: () => messageTech(cni, 'message') },
+    { label: '🔄 Request update', fn: () => messageTech(cni, 'update') },
+    { label: '↪ Reassign', fn: () => openReassign(cni) },
+    { label: '⧉ Fieldcode', href: 'https://hemmersbach.fieldcode.com/filter?cni=' + encodeURIComponent(cni) },
+  ]);
 }
 const METHOD = { call: '📞 Call', voicemail: '📼 Voicemail', text: '💬 Text', email: '✉️ Email' };
 async function logContact(cni, method, btn) {
@@ -911,9 +962,34 @@ function renderParts() {
         '<button class="act" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>' +
       '</div>') + '</div>';
   };
-  el.innerHTML = (open.length ? '<div class="group">To pick up · ' + open.length + '</div>' + open.map(card).join('') : '<div class="empty">Nothing waiting to be picked up</div>') +
+  // One block per FedEx location: name + address + Navigate once, then every part there
+  const locKey = p => (p.pickup || p.pickupName || (p.fedex && p.fedex.where) || 'Unknown location').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const partRow = p => {
+    const f = p.fedex;
+    return '<div class="loc-part"><div class="row between"><span class="trk" style="font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--sub)">' +
+        esc(p.tracking.slice(0, -4)) + '<span class="last4" style="font-size:17px">' + esc(p.tracking.slice(-4)) + '</span></span>' + partChip(f) + '</div>' +
+      '<div class="small" style="margin-top:2px">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') + '</div>' +
+      (p.line && p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim() ? '<div style="font-weight:600;font-size:14px;margin-top:2px">' + esc(p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim()) + '</div>' : '') +
+      (f && f.daysLeft != null && !f.returned && !done(p) && f.held ? '<div class="small" style="margin-top:4px"><a href="#" onclick="event.preventDefault();extendHold(\'' + p.tracking + '\',\'' + p.cni + '\')">Hold extended?</a></div>' : '') +
+      (done(p) ? '<div class="small" style="margin-top:6px;color:var(--green)">Picked up ✅</div>'
+        : f && f.returned ? '<div class="small" style="margin-top:6px;color:var(--red)">↩ Went back to the shipper — no pickup</div>'
+        : '<button class="act" style="width:100%;margin-top:8px" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>') +
+    '</div>';
+  };
+  const grouped = list => {
+    const g = new Map();
+    list.forEach(p => { const k = locKey(p); if (!g.has(k)) g.set(k, []); g.get(k).push(p); });
+    return [...g.values()].sort((a, b) => Math.min(...a.map(left)) - Math.min(...b.map(left))).map(ps => {
+      const p0 = ps.find(x => x.pickup) || ps[0];
+      return '<div class="loc"><div class="loc-head"><div class="row between"><span class="co">' + esc(p0.pickupName || (p0.fedex && p0.fedex.where) || 'Pickup') + '</span>' +
+          '<span class="chip">' + ps.length + ' part' + (ps.length === 1 ? '' : 's') + '</span></div>' +
+          (p0.pickup ? '<div class="meta">' + esc(p0.pickup) + '</div><a class="act" style="display:block;margin-top:8px" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(p0.pickup) + '">▶ Navigate</a>' : '') +
+        '</div>' + ps.map(partRow).join('') + '</div>';
+    }).join('');
+  };
+  el.innerHTML = (open.length ? '<div class="group">To pick up · ' + open.length + '</div>' + grouped(open) : '<div class="empty">Nothing waiting to be picked up</div>') +
     (gone.length ? '<div class="group" style="cursor:pointer" onclick="partsShowDone=!partsShowDone;renderParts()">' + (partsShowDone ? '▾' : '▸') +
-      ' Picked up · ' + gone.length + '</div>' + (partsShowDone ? gone.map(card).join('') : '') : '');
+      ' Picked up · ' + gone.length + '</div>' + (partsShowDone ? grouped(gone) : '') : '');
 }
 let partsShowDone = false;
 function partChip(f) {
@@ -1028,12 +1104,9 @@ const dayOf = iso => { const d = new Date(iso); return d.getFullYear() + '-' + S
 const clock = iso => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 function visitHtml(cni) {
   const v = visitOf(cni) || {};
-  return '<div class="sec" id="visit-sec"><h3>Visit <span style="text-transform:none;letter-spacing:0">' +
-      (v.in ? '· in ' + clock(v.in) + (v.out ? ' · out ' + clock(v.out) : ' · on site') : '') + '</span></h3>' +
-    '<div class="actions" style="grid-template-columns:1fr 1fr">' +
-      '<button class="act' + (v.in && !v.out ? ' on' : '') + '" onclick="visit(\'' + cni + '\',\'in\')">📍 Arrived' + (v.in ? ' ' + clock(v.in) : '') + '</button>' +
-      '<button class="act' + (v.out ? ' on' : '') + '" onclick="visit(\'' + cni + '\',\'out\')"' + (v.in ? '' : ' disabled') + '>✅ Done' + (v.out ? ' ' + clock(v.out) : '') + '</button>' +
-    '</div><div class="small" style="margin:6px 2px 0">Fills in the date, check-in and check-out on the closure form.</div></div>';
+  const lab = v.out ? '✅ Done<span class="sub">' + clock(v.in) + '–' + clock(v.out) + '</span>'
+    : v.in ? '🟢 On site<span class="sub">since ' + clock(v.in) + '</span>' : '📍 Visit<span class="sub">check in / out</span>';
+  return '<button class="act' + (v.in && !v.out ? ' on' : '') + '" id="visit-sec" onclick="visitMenu(\'' + cni + '\')">' + lab + '</button>';
 }
 async function visit(cni, kind) {
   const v = visitOf(cni) || {};
@@ -1055,8 +1128,9 @@ function mergeVisit(cni, sv) {
 // ── Notes on a ticket ─────────────────────────────────────────────────────
 function notesHtml(cni, list) {
   return '<div class="sec"><h3>Notes</h3><div id="notes-list">' + notesList(list) + '</div>' +
-    '<textarea class="in" id="note-text" placeholder="Add a note — gate code, parking, who to ask for…" style="margin-top:6px"></textarea>' +
-    '<button class="act" style="width:100%;margin-top:6px" onclick="addNote(\'' + cni + '\')">Save note</button></div>';
+    '<div class="note-row"><textarea class="in" id="note-text" rows="1" placeholder="Add a note — gate code, parking…" ' +
+      'oninput="this.style.height=\'42px\';this.style.height=this.scrollHeight+\'px\'"></textarea>' +
+    '<button class="act" onclick="addNote(\'' + cni + '\')">Save</button></div></div>';
 }
 const notesList = list => (list || []).length ? (list || []).slice().reverse().map(n => '<div class="card" style="padding:8px 12px"><div class="small">' +
   esc(n.who) + ' · ' + esc(new Date(n.time).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })) +
@@ -1070,7 +1144,7 @@ async function addNote(cni) {
     const n = r.note || { time: new Date().toISOString(), who: session.user.name, text, pending: !!r.queued };
     if (d) { d.notes = (d.notes || []).concat([n]); store.set('rw_det_' + cni, d); }
     $('#notes-list').innerHTML = notesList(d ? d.notes : [n]);
-    $('#note-text').value = '';
+    $('#note-text').value = ''; $('#note-text').style.height = '42px';
     if (!r.queued) toast('Note saved');
   } catch (e) { toast(e.message, 4000); }
 }
