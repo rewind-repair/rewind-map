@@ -217,7 +217,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.40';
+const APP_VERSION = '3.41';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -1585,9 +1585,9 @@ let adminTab = store.get('rw_admin_tab', 'dash'), searchQ = '', searchT = null, 
 function renderAdmin() {
   const el = $('#view-admin');
   if (!el || view !== 'admin') return;
-  el.innerHTML = '<div class="seg" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
+  el.innerHTML = '<div class="seg" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['board', 'Board'], ['inbox', 'Inbox'], ['fc', 'Fieldcode'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
     '<button class="' + (adminTab === k ? 'on' : '') + '" onclick="adminTab=\'' + k + '\';store.set(\'rw_admin_tab\',adminTab);renderAdmin()">' + l + '</button>').join('') + '</div><div id="admin-body"></div>';
-  const r = { dash: renderDash, board: renderBoard, inbox: renderInbox, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores }[adminTab] || renderDash;
+  const r = { dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores }[adminTab] || renderDash;
   r();
 }
 const jobRow = (r, extra) => '<div class="card job" onclick="openJob(\'' + r.cni + '\')"><div class="row between"><span class="co">' + esc(r.company || 'CNI ' + r.cni) + '</span><b>' + esc(r.tech) + '</b></div>' +
@@ -1839,6 +1839,104 @@ function hemList() {
     (loose.length ? '<div class="group">Emails not matched to a ticket · ' + loose.length + '</div>' + loose.map((m, k) =>
       '<div class="card">' + (m.refs && m.refs.length ? '<div class="small" style="color:var(--sub)">Mentions ' + esc(m.refs.join(', ')) + '</div>' : '') + hemMsg(m, 'l' + k) + '</div>').join('') : '') +
     (!ts.length && !loose.length ? '<div class="empty">Nothing from HEM in this window</div>' : '');
+}
+
+// ── Fieldcode (PREVIEW): every open ticket straight from Fieldcode, and what dispatching it would
+// produce. Read-only: nothing here sends an email, saves a draft, pins or changes Fieldcode. ──────
+let fcData = null, fcQ = '', fcFilter = 'all';
+const fcBanner = '<div class="card" style="border:1px dashed var(--amber);background:rgba(232,168,58,.08);font-size:13px">' +
+  '<b style="color:var(--amber)">Preview</b> — read straight from Fieldcode. Nothing here sends, saves or pins anything. Dispatch keeps using Draft Emails and 🗺 Maps in Fieldcode.</div>';
+async function renderFc(fresh) {
+  const box = $('#admin-body');
+  box.innerHTML = fcBanner + '<input class="search" placeholder="CNI, company, city, model, serial…" value="' + esc(fcQ) + '" oninput="fcQ=this.value;fcListRender()">' +
+    '<div class="seg" style="margin:6px 4px 8px">' + [['all', 'All'], ['new', 'Not drafted'], ['rpos', 'RPOS'], ['pudo', 'Parts at FedEx'], ['gaps', 'Missing info']].map(([k, l]) =>
+      '<button class="' + (fcFilter === k ? 'on' : '') + '" onclick="fcFilter=\'' + k + '\';renderFc()">' + l + '</button>').join('') + '</div><div id="fc-list"><div class="empty"><span class="spin"></span></div></div>';
+  if (!fcData || fresh) {
+    try { fcData = await api('fclist'); } catch (e) { $('#fc-list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  }
+  fcListRender();
+}
+function fcListRender() {
+  const el = $('#fc-list'); if (!el || !fcData) return;
+  if (!fcData.tickets.length) { el.innerHTML = '<div class="empty">No feed yet. Install the Fieldcode Feed script and keep a Fieldcode tab open.</div>'; return; }
+  const q = fcQ.trim().toLowerCase();
+  const pass = t => (fcFilter === 'all' || (fcFilter === 'new' && !t.drafted) || (fcFilter === 'rpos' && t.rpos) || (fcFilter === 'pudo' && t.pudo) ||
+    (fcFilter === 'gaps' && (!t.hasAddress || !t.hasEmail || !t.hasSerial))) && (!q || JSON.stringify(t).toLowerCase().includes(q));
+  const list = fcData.tickets.filter(pass);
+  const n = k => fcData.tickets.filter(k).length;
+  el.innerHTML = '<div class="small" style="margin:0 4px 6px">' + fcData.tickets.length + ' open in Fieldcode · ' + n(t => !t.drafted) + ' not drafted · ' + n(t => t.rpos) + ' RPOS · ' +
+      n(t => t.pudo) + ' with parts at FedEx' + (fcData.at ? ' · feed ' + esc(ago(fcData.at)) : '') + '</div>' +
+    list.map(t => { const lsdt = Date.parse(t.lsdt); const j = { device: t.model, project: t.project, rpos: t.rpos };
+      return '<div class="card job" onclick="openFc(\'' + t.cni + '\')"' + (t.rpos ? ' style="border-left:4px solid var(--red)"' : '') + '>' +
+        '<div class="row between"><span class="co">' + esc(t.company || 'CNI ' + t.cni) + '</span><span>' + (t.rpos ? '<span class="chip red">🚨 RPOS</span> ' : '') +
+          (t.drafted ? '<span class="chip green">Drafted ' + esc(shortDate(t.drafted)) + '</span>' : '<span class="chip amber">Not drafted</span>') + '</span></div>' +
+        '<div class="small">CNI ' + esc(t.cni) + ' · ' + esc(t.cne) + ' · ' + esc(t.status) + ' · ' + esc([t.city, t.state].filter(Boolean).join(', ')) + '</div>' +
+        '<div class="small">' + KIND[deviceKind(j)] + ' ' + esc(t.model || '—') + (isNaN(lsdt) ? '' : ' · <span style="color:var(--' + (lsdt - Date.now() < 24 * 3600e3 ? 'red' : 'sub') + ')">LSDT ' +
+          new Date(lsdt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '</span>') + '</div>' +
+        '<div class="small" style="margin-top:3px">' + (t.tech ? '<b>' + esc(techName(t.tech)) + '</b> <span style="color:var(--sub)">(' + esc(t.why) + ')</span>' : '<span style="color:var(--amber)">No tech suggestion</span>') +
+          (t.parts ? ' · 📦 ' + t.parts + (t.pudo ? ' (' + t.pudo + ' at FedEx)' : '') : '') + (t.pinned ? ' · 📍 pinned' : '') +
+          (!t.hasAddress ? ' · <span style="color:var(--red)">no street</span>' : '') + (!t.hasEmail ? ' · <span style="color:var(--amber)">no email</span>' : '') +
+          (!t.hasSerial ? ' · <span style="color:var(--amber)">no serial</span>' : '') + '</div></div>'; }).join('') +
+    (list.length ? '' : '<div class="empty">Nothing matches</div>');
+}
+let fcCur = null;
+async function openFc(cni, tech) {
+  sheet('CNI ' + esc(cni) + ' · Fieldcode', fcBanner + '<div id="fc-det"><div class="empty"><span class="spin"></span></div></div>');
+  try { fcCur = await api('fcticket', { cni, tech }); } catch (e) { $('#fc-det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  const d = fcCur, t = d.ticket, p = d.preview;
+  const when = iso => { const x = Date.parse(iso); return isNaN(x) ? '' : new Date(x).toLocaleString([], { weekday: 'short', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  const kv = (k, v) => v ? '<dt>' + k + '</dt><dd>' + v + '</dd>' : '';
+  const tel = x => x ? '<a href="tel:' + esc(String(x).replace(/[^\d+]/g, '')) + '">' + esc(x) + '</a>' : '';
+  const addr = [t.street, t.city, t.state, t.zip].filter(Boolean).join(', ');
+  $('#fc-det').innerHTML =
+    (t.rpos ? '<div class="card" style="border:2px solid var(--red)"><b style="color:var(--red)">🚨 RPOS</b> — no customer email; the tech just goes within the SLA.</div>' : '') +
+    '<div class="card"><div class="row between"><b>' + esc(t.company || '') + '</b><span class="chip">' + esc(t.status) + '</span></div>' +
+      '<div class="small">CNI ' + esc(t.cni) + ' · ' + esc(t.cne) + (t.cneParent ? ' · parent ' + esc(t.cneParent) : '') + ' · ' + esc(t.project) + '</div>' +
+      '<dl class="kv" style="margin-top:8px">' + kv('Contact', esc(t.contact)) + kv('Phone', [tel(t.phone), tel(t.phone2)].filter(Boolean).join(' / ')) +
+        kv('Email', t.email ? '<a href="mailto:' + esc(t.email) + '">' + esc(t.email) + '</a>' : '<span style="color:var(--amber)">none</span>') +
+        kv('Address', addr ? '<a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(addr) + '">' + esc(addr) + '</a>' : '<span style="color:var(--red)">none</span>') +
+        kv('Latest start', esc(when(t.lsdt))) + kv('SLA', esc(t.sla)) + kv('Created', esc(when(t.created))) +
+        kv('Device', KIND[deviceKind({ device: t.model, project: t.project })] + ' ' + esc(t.model)) + kv('Serial', esc(t.serial) || '<span style="color:var(--amber)">none</span>') +
+        kv('Warranty', esc(t.warranty)) + kv('Type', esc([t.category, t.subCategory].filter(Boolean).join(' / '))) + kv('Skills', esc((t.skills || []).join(', '))) +
+        (t.appt && t.appt.from ? kv('Appointment', esc(when(t.appt.from)) + (t.appt.to ? '–' + esc(when(t.appt.to).split(' ').pop()) : '') + (t.appt.fixed ? '' : ' (proposed)')) : '') + '</dl>' +
+      '<div class="small" style="margin-top:6px">Our side: ' + (d.status.drafted ? 'drafted ' + esc(shortDate(d.status.drafted)) : 'not drafted') +
+        ' · ' + (d.status.pinned ? '📍 ' + esc(d.status.pinned) : 'no pin') + ' · ' + (d.status.inApp ? 'in the app' : 'not in the app') + '</div></div>' +
+    '<div class="card"><b>Description</b><div class="small" style="white-space:pre-wrap;margin-top:4px;max-height:9em;overflow:auto">' + esc(t.description || t.shortDesc || '—') + '</div></div>' +
+    '<div class="card"><b>Parts</b>' + ((t.parts || []).length ? t.parts.map(x =>
+      '<div style="border-top:1px solid var(--line);padding:6px 0;margin-top:6px"><div>' + esc(x.desc || x.partNumber) + ' <span class="small">× ' + esc(x.qty) + ' · ' + esc(x.status) + '</span></div>' +
+      (x.tracking ? '<div class="small">📦 <a target="_blank" rel="noopener" href="https://www.fedex.com/fedextrack/?trknbr=' + esc(x.tracking) + '">' + trackHtml(x.tracking) + '</a>' + (x.eta ? ' · ETA ' + esc(when(x.eta)) : '') + '</div>' : '<div class="small" style="color:var(--amber)">No tracking yet</div>') +
+      (x.pudo ? '<div class="small">FedEx hold: ' + esc(x.address || 'pickup location') + (x.holdHours ? ' · held ' + Math.round(x.holdHours / 24) + ' days' : '') + '</div>' : x.address ? '<div class="small">Ships to: ' + esc(x.address) + '</div>' : '') +
+      (x.received ? '<div class="small" style="color:var(--green)">Received ' + esc(when(x.received)) + (x.receivedBy ? ' by ' + esc(x.receivedBy) : '') + '</div>' : '') + '</div>').join('') : '<div class="small">No parts on this ticket</div>') + '</div>' +
+    '<div class="card"><b>Dispatch it (preview)</b>' +
+      '<label class="f" style="margin-top:8px"><span>Tech' + (d.suggest.why ? ' · suggested: ' + esc(d.suggest.why) : '') + '</span><select class="in" onchange="openFc(\'' + t.cni + '\',this.value)">' +
+        '<option value="">Pick a tech…</option>' + techOpts(p.tech) + '</select></label>' +
+      '<div class="actions" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">' +
+        '<button class="act" onclick="fcPreview(\'tech\')">✉ Tech email</button>' +
+        '<button class="act"' + (p.skipCustomer || !p.custTo ? ' disabled' : '') + ' onclick="fcPreview(\'cust\')">✉ Customer' + (p.skipCustomer ? '<span class="sub">RPOS: none</span>' : !p.custTo ? '<span class="sub">no email</span>' : '') + '</button>' +
+        '<button class="act" onclick="fcPreview(\'pin\')">📍 Pin note</button></div>' +
+      '<div class="small" style="margin-top:8px;color:var(--sub)">Shows what Draft Emails and 🗺 Maps would produce for this ticket, with nothing scraped from the page. Copy buttons only copy text.</div></div>' +
+    '<a class="act" style="display:block;margin:4px 0 20px" target="_blank" rel="noopener" href="https://hemmersbach.fieldcode.com/filter?cni=' + encodeURIComponent(t.cni) + '">⧉ Open in Fieldcode</a>';
+}
+function fcPreview(kind) {
+  const p = fcCur.preview;
+  const copy = (txt, what) => { try { navigator.clipboard.writeText(txt); toast('Copied ' + what); } catch (e) { toast('Copy failed', 3000); } };
+  window.__fcCopy = copy;
+  const frame = html => '<iframe sandbox style="width:100%;height:62vh;border:1px solid var(--line);border-radius:10px;background:#fff" srcdoc="' + esc(html) + '"></iframe>';
+  const toText = html => { const d = document.createElement('div'); d.innerHTML = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|tr|h3)>/gi, '\n'); return d.textContent.replace(/\n{3,}/g, '\n\n').trim(); };
+  window.__fcP = { p, toText };
+  if (kind === 'pin') {
+    sheet('📍 Pin note · preview', fcBanner + '<div class="card"><dl class="kv"><dt>List</dt><dd>' + esc(p.pinList || '(pick a tech)') + '</dd><dt>Search</dt><dd>' + esc(p.pinQuery) + '</dd></dl></div>' +
+      '<pre class="card" style="white-space:pre-wrap;font-size:13px">' + esc(p.pinNote) + '</pre>' +
+      '<button class="act" style="width:100%" onclick="__fcCopy(__fcP.p.pinNote,\'pin note\')">📋 Copy note</button>');
+    return;
+  }
+  const tech = kind === 'tech';
+  sheet((tech ? '✉ Tech email' : '✉ Customer email') + ' · preview', fcBanner +
+    '<div class="card small"><dl class="kv"><dt>To</dt><dd>' + esc(tech ? p.techEmail || '(pick a tech)' : p.custTo) + '</dd>' + (!tech && p.custCc ? '<dt>Cc</dt><dd>' + esc(p.custCc) + '</dd>' : '') +
+      '<dt>Subject</dt><dd>' + esc(tech ? p.techSubject : p.custSubject) + '</dd></dl></div>' + frame(tech ? p.techHtml : p.custHtml) +
+    '<div class="actions" style="grid-template-columns:1fr 1fr;margin-top:8px"><button class="act" onclick="__fcCopy(__fcP.p.' + (tech ? 'techSubject' : 'custSubject') + ',\'subject\')">📋 Subject</button>' +
+      '<button class="act" onclick="__fcCopy(__fcP.toText(__fcP.p.' + (tech ? 'techHtml' : 'custHtml') + '),\'text\')">📋 Text</button></div>' +
+    (tech ? '<div class="small" style="margin-top:8px;color:var(--sub)">The real email also has the AI symptom summary and the RW card styling.</div>' : ''));
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
