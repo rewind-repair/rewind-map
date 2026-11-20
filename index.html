@@ -187,7 +187,7 @@
   <button class="icon-btn" onclick="openNotifs()" title="Notifications" style="position:relative">🔔<span id="bell-badge"></span></button>
   <button class="icon-btn" onclick="refresh(true)" title="Refresh">↻</button>
   <button class="icon-btn" onclick="toggleTheme()" title="Light / dark" id="theme-btn">◐</button>
-  <button class="icon-btn" onclick="if(confirm('Sign out?'))logout()" title="Sign out" style="font-size:12px">Sign out</button>
+  <button class="icon-btn" onclick="sure('Sign out?','Sign out').then(y=>{if(y)logout()})" title="Sign out" style="font-size:12px">Sign out</button>
 </header>
 <div id="stamp"></div>
 
@@ -217,7 +217,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.39';
+const APP_VERSION = '3.40';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -670,12 +670,18 @@ async function doReassign(cni) {
 
 // Admin → tech about this ticket
 async function messageTech(cni, kind) {
-  const text = prompt(kind === 'update' ? 'Update request (optional note):' : 'Message to the tech:', '');
-  if (text === null) return;
-  if (kind === 'message' && !text.trim()) return;
-  const teams = confirm('Also post it in the tech\'s Teams chat?');
-  try { await api('notifytech', { cni, kind, text, teams }); flash(kind === 'update' ? 'Update requested' : 'Message sent', teams ? 'App + Teams' : 'In the app'); }
-  catch (e) { toast(e.message, 4000); }
+  const upd = kind === 'update';
+  const r = await ask((upd ? '🔄 Request an update' : '💬 Message the tech') + ' · CNI ' + esc(cni), {
+    placeholder: upd ? 'Optional note, e.g. "did the part arrive?"' : 'Message', required: upd ? '' : 'Write a message first',
+    check: 'Also post it in the tech\'s Teams chat', ok: upd ? 'Request update' : 'Send' });
+  if (!r) return;
+  toast('Sending…', 15000);
+  try {
+    const res = await api('notifytech', { cni, kind, text: r.text, teams: r.check });
+    $('#toast').classList.remove('show');
+    flash(upd ? 'Update requested' : 'Message sent', (res.to === 'Owners' ? 'to the owners · ' : '') +
+      (r.check ? (res.chat ? 'app + ' + res.chat : 'app only (no Teams chat found)') : 'in the app'));
+  } catch (e) { toast('Not sent: ' + e.message, 5000); }
 }
 
 // ── Job details ───────────────────────────────────────────────────────────
@@ -777,6 +783,34 @@ function menu(title, items) {
   document.body.appendChild(bg);
   bg.querySelectorAll('button[data-n]').forEach(b => b.onclick = () => { closeMenu(); items[+b.dataset.n].fn(b); });
 }
+// In-app replacements for prompt() / confirm(): those are blocked or return nothing in some installed
+// apps and in-app browsers, which made buttons silently do nothing.
+// ask(title, { placeholder, value, number, required, check, checked, ok, input:false }) → text | {text, check} | true | null
+function ask(title, o) {
+  o = o || {};
+  return new Promise(res => {
+    closeMenu();
+    const bg = document.createElement('div');
+    bg.id = 'menu-bg';
+    const done = v => { bg.remove(); res(v); };
+    const field = o.input === false ? '' : o.number
+      ? '<input class="in" id="ask-t" type="number" inputmode="numeric" value="' + esc(o.value || '') + '">'
+      : '<textarea class="in" id="ask-t" style="min-height:70px" placeholder="' + esc(o.placeholder || '') + '">' + esc(o.value || '') + '</textarea>';
+    bg.innerHTML = '<div id="menu"><div class="mt">' + title + '</div>' + field +
+      (o.check ? '<label class="row" style="gap:10px;margin:10px 2px 0"><input type="checkbox" id="ask-c"' + (o.checked === false ? '' : ' checked') + '> <span>' + o.check + '</span></label>' : '') +
+      '<div class="actions" style="margin-top:12px"><button class="act" id="ask-no">Cancel</button><button class="act primary" id="ask-ok">' + (o.ok || 'OK') + '</button></div></div>';
+    document.body.appendChild(bg);
+    bg.onclick = e => { if (e.target === bg) done(null); };
+    $('#ask-no').onclick = () => done(null);
+    $('#ask-ok').onclick = () => {
+      const t = $('#ask-t'), v = t ? t.value : true;
+      if (o.required && !String(v).trim()) { toast(o.required); return; }
+      done(o.check ? { text: t ? v : '', check: $('#ask-c').checked } : v);
+    };
+    setTimeout(() => { const t = $('#ask-t'); if (t) t.focus(); }, 60);
+  });
+}
+const sure = (title, ok) => ask(title, { input: false, ok }).then(v => v !== null);
 function closeMenu() { const m = $('#menu-bg'); if (m) m.remove(); }
 function visitMenu(cni) {
   const v = visitOf(cni) || {};
@@ -797,7 +831,7 @@ function teamsMenu(cni) {
 }
 function adminMenu(cni) {
   const j = jobs.find(x => x.cni === cni) || {};
-  menu('Admin → ' + esc(j.tech || 'tech'), [
+  menu('Admin → ' + esc(j.tech === 'OWN' ? 'Owners (goes to Admin Team)' : techName(j.tech || '') || 'tech'), [
     { label: '💬 Message tech', fn: () => messageTech(cni, 'message') },
     { label: '🔄 Request update', fn: () => messageTech(cni, 'update') },
     { label: '↪ Reassign', fn: () => openReassign(cni) },
@@ -806,7 +840,7 @@ function adminMenu(cni) {
 }
 const METHOD = { call: '📞 Call', voicemail: '📼 Voicemail', text: '💬 Text', email: '✉️ Email' };
 async function logContact(cni, method, btn) {
-  const note = prompt(METHOD[method] + ' — note (optional), e.g. "no answer", "left VM at main line":', '');
+  const note = await ask(METHOD[method] + ' — note (optional)', { placeholder: 'e.g. no answer, left VM at main line', ok: 'Log attempt' });
   if (note === null) return;
   btn.disabled = true;
   try {
@@ -913,7 +947,9 @@ function linkify(t) {
 async function sendUpdate(cni, kind) {
   let text = '';
   if (kind === 'note' || kind === 'late' || kind === 'parts') {
-    text = prompt(kind === 'note' ? 'Message for dispatch:' : kind === 'late' ? 'How late / new ETA? (optional)' : 'Which part? (optional)') ;
+    text = await ask(kind === 'note' ? '💬 Message for dispatch' : kind === 'late' ? '⏰ Running late' : '🔧 Need parts', {
+      placeholder: kind === 'note' ? 'Message' : kind === 'late' ? 'How late / new ETA (optional)' : 'Which part (optional)',
+      required: kind === 'note' ? 'Write a message first' : '', ok: 'Send' });
     if (text === null) return;
     if (kind === 'note' && !text.trim()) return;
   }
@@ -1023,7 +1059,7 @@ async function submitClosure(cni) {
   const v = closureValues();
   const missing = schema.fields.filter(f => f.required && !['auto', 'auto-email'].includes(f.kind) && !String(v[f.key] || '').trim());
   if (missing.length) { toast('Missing: ' + missing.map(f => f.label).join(', '), 4000); return; }
-  if (!confirm('Submit the closure for CNI ' + cni + '?')) return;
+  if (!(await sure('Submit the closure for CNI ' + esc(cni) + '?', 'Submit'))) return;
   const b = $('#cf-send'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…';
   try {
     const files = await closureFiles();
@@ -1153,13 +1189,13 @@ function returnChip(f) {
   return '<span class="chip ' + cls + '">⏳ ' + esc(txt) + (f.extended ? ' · extended +' + f.extended : '') + '</span>';
 }
 async function extendHold(tracking, cni) {
-  const d = prompt('FedEx extended the hold by how many days?', '5');
+  const d = await ask('⏳ FedEx extended the hold by how many days?', { number: true, value: '5', ok: 'Save' });
   if (d === null) return;
   try { await api('extend', { tracking, cni, days: Number(d) }); toast('Hold extended +' + d + ' days'); parts = null; loadParts(); }
   catch (e) { toast(e.message, 4000); }
 }
 async function pickedUp(tracking, cni, btn) {
-  if (!confirm('Mark part ' + tracking + ' as picked up?')) return;
+  if (!(await sure('Mark part …' + esc(tracking.slice(-4)) + ' as picked up?', 'Picked up'))) return;
   btn.disabled = true;
   try { await api('pickedup', { tracking, cni }); toast('Marked picked up'); const p = parts.find(x => x.tracking === tracking); if (p) p.markedPickedUp = true; renderParts(); }
   catch (e) { btn.disabled = false; toast(e.message, 4000); }
@@ -1258,7 +1294,7 @@ function visitHtml(cni) {
 async function visit(cni, kind) {
   const v = visitOf(cni) || {};
   const at = new Date().toISOString();
-  if (kind === 'in' && v.in && !v.out && !confirm('Already checked in at ' + clock(v.in) + '. Check in again now?')) return;
+  if (kind === 'in' && v.in && !v.out && !(await sure('Already checked in at ' + clock(v.in) + '. Check in again now?', 'Check in again'))) return;
   if (kind === 'in') { v.in = at; v.out = ''; } else v.out = at;
   store.set('rw_visit_' + cni, v);
   const sec = $('#visit-sec'); if (sec) sec.outerHTML = visitHtml(cni);
@@ -1753,7 +1789,7 @@ async function renderWatch() {
     (d.transit ? '<div class="small" style="margin:8px 4px">' + d.transit + ' more on the way to FedEx</div>' : '');
 }
 async function nudge(tracking, btn) {
-  const text = prompt('Nudge the tech to pick this part up. Add a note (optional):', '');
+  const text = await ask('🔔 Nudge the tech to pick this part up', { placeholder: 'Optional note', ok: 'Send nudge' });
   if (text === null) return;
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
   try {
