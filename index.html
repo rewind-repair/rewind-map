@@ -203,7 +203,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.34';
+const APP_VERSION = '3.35';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -639,7 +639,7 @@ function partsBox(j) {
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
   return (j.rpos ? '<div class="card" style="border:2px solid var(--red);background:rgba(224,106,106,.1)"><b style="color:var(--red)">🚨 URGENT — RPOS (retail point of sale)</b>' +
-      '<div class="small" style="margin-top:2px">Schedule this first. No scheduling email went to the end user: contact the site directly.</div></div>' : '') +
+      '<div class="small" style="margin-top:2px">Point of sale: no need to contact the site or schedule. Just go, as soon as you can within the SLA.</div></div>' : '') +
     '<div class="card">' +
       '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
