@@ -203,7 +203,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.33';
+const APP_VERSION = '3.34';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -350,10 +350,11 @@ function apptChip(j) {
   const cls = d < t ? 'red' : d === t ? 'green' : 'blue';
   return '<span class="chip ' + cls + '">' + (d === t ? 'Today' : d === addDays(t, 1) ? 'Tomorrow' : nice(d)) + (j.appt.time ? ' · ' + esc(j.appt.time) : '') + '</span>';
 }
+const rposChip = j => j.rpos ? '<span class="chip red" style="background:rgba(224,106,106,.15)">🚨 RPOS · urgent</span> ' : '';
 function jobCard(j) {
   const admin = session.user.admin && techFilter === 'ALL';
-  return '<div class="card job" onclick="openJob(\'' + j.cni + '\')">' +
-    '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span>' + apptChip(j) + '</div>' +
+  return '<div class="card job" onclick="openJob(\'' + j.cni + '\')"' + (j.rpos ? ' style="border-left:4px solid var(--red)"' : '') + '>' +
+    '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span><span>' + rposChip(j) + apptChip(j) + '</span></div>' +
     '<div class="meta">' + esc([j.address || j.city, j.device].filter(Boolean).join(' · ')) + '</div>' +
     '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
@@ -365,10 +366,11 @@ function jobCard(j) {
 function renderToday() {
   const el = $('#view-today');
   if (!jobs.length) { el.innerHTML = '<div class="empty">No open jobs 🎉</div>'; return; }
-  const t = todayISO(), groups = { over: [], today: [], tomorrow: [], week: [], later: [], none: [] };
+  const t = todayISO(), groups = { urgent: [], over: [], today: [], tomorrow: [], week: [], later: [], none: [] };
   jobs.forEach(j => {
     const d = j.appt && j.appt.date;
-    if (!d) groups.none.push(j);
+    if (j.rpos) groups.urgent.push(j);              // RPOS: always on top, whatever the date
+    else if (!d) groups.none.push(j);
     else if (d < t) groups.over.push(j);
     else if (d === t) groups.today.push(j);
     else if (d === addDays(t, 1)) groups.tomorrow.push(j);
@@ -379,7 +381,7 @@ function renderToday() {
   const sec = (title, list) => list.length ? '<div class="group">' + title + ' · ' + list.length + '</div>' + list.sort(byDate).map(jobCard).join('') : '';
   const rd = routeDay(), rn = rd ? jobs.filter(j => j.appt && j.appt.date === rd && j.lat).length : 0;
   const routeBtn = rn ? '<button class="act" style="width:100%;margin:6px 0 2px" onclick="openRoute()">🧭 Route for ' + (rd === t ? 'today' : nice(rd)) + ' · ' + rn + ' stop' + (rn === 1 ? '' : 's') + '</button>' : '';
-  el.innerHTML = routeBtn + sec('Today', groups.today) + sec('Past date — reschedule or close', groups.over) + sec('Tomorrow', groups.tomorrow) +
+  el.innerHTML = routeBtn + sec('🚨 Urgent — RPOS', groups.urgent) + sec('Today', groups.today) + sec('Past date — reschedule or close', groups.over) + sec('Tomorrow', groups.tomorrow) +
                  sec('Next 7 days', groups.week) + sec('Later', groups.later) + sec('Not scheduled yet', groups.none);
 }
 function renderJobs() {
@@ -394,7 +396,7 @@ function renderJobs() {
 function renderJobsList() {
   const q = search.toLowerCase();
   const list = jobs.filter(j => !q || [j.cni, j.wo, j.company, j.customer, j.address, j.city, j.device, j.tech].join(' ').toLowerCase().includes(q))
-    .sort((a, b) => (a.city || '').localeCompare(b.city || '') || (a.company || '').localeCompare(b.company || ''));
+    .sort((a, b) => (b.rpos ? 1 : 0) - (a.rpos ? 1 : 0) || (a.city || '').localeCompare(b.city || '') || (a.company || '').localeCompare(b.company || ''));
   const box = $('#jobs-list');
   if (box) box.innerHTML = list.length ? list.map(jobCard).join('') : '<div class="empty">Nothing matches</div>';
 }
@@ -636,7 +638,9 @@ function partsBox(j) {
 }
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
-  return '<div class="card">' +
+  return (j.rpos ? '<div class="card" style="border:2px solid var(--red);background:rgba(224,106,106,.1)"><b style="color:var(--red)">🚨 URGENT — RPOS (retail point of sale)</b>' +
+      '<div class="small" style="margin-top:2px">Schedule this first. No scheduling email went to the end user: contact the site directly.</div></div>' : '') +
+    '<div class="card">' +
       '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
       (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
