@@ -203,7 +203,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.32';
+const APP_VERSION = '3.33';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -975,15 +975,27 @@ function renderParts() {
   const locKey = p => (p.pickup || p.pickupName || (p.fedex && p.fedex.where) || 'Unknown location').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const partRow = p => {
     const f = p.fedex;
-    return '<div class="loc-part"><div class="row between"><span class="trk" style="font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--sub)">' +
+    const name = p.line && p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim();
+    // compact countdown for the narrow column: "1 day left / by Fri 11/20"
+    const d = f && f.daysLeft;
+    const chip = f && f.held && d != null && !f.returned
+      ? '<span class="chip ' + (d <= 1 ? 'red' : d <= 2 ? 'amber' : 'green') + '" style="white-space:normal;text-align:center;line-height:1.35">⏳ ' +
+          (d < 0 ? 'Past last day' : d === 0 ? 'Last day today' : d + ' day' + (d === 1 ? '' : 's') + ' left') +
+          '<br><span style="font-weight:500">by ' + esc(f.returnBy || '') + (f.extended ? ' · +' + f.extended : '') + '</span></span>'
+      : f && (f.returned || f.delivered) ? partChip(f).replace('class="chip', 'style="white-space:normal;text-align:center" class="chip') : '';
+    // Left: number, status, ticket, part. Right: the countdown with the options button under it.
+    return '<div class="loc-part" style="display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:start">' +
+      '<div style="min-width:0"><span class="trk" style="font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--sub)">' +
         esc(p.tracking.slice(0, -4)) + '<span class="last4" style="font-size:17px">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + '</span>' +
-        (f && f.held && f.daysLeft != null && !f.returned ? returnChip(f) : f && (f.returned || f.delivered) ? partChip(f) : '') + '</div>' +
-      '<div class="small" style="margin-top:2px">' + partStatus(p) + '</div>' +
-      '<div class="small" style="margin-top:2px">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') + '</div>' +
-      (p.line && p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim() ? '<div style="font-weight:600;font-size:14px;margin-top:2px">' + esc(p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim()) + '</div>' : '') +
-      (done(p) ? '<div class="small" style="margin-top:6px;color:var(--green)">Picked up ✅</div>'
-        : f && f.returned ? '<div class="small" style="margin-top:6px;color:var(--red)">↩ Went back to the shipper — no pickup</div>'
-        : '<button class="act" style="width:100%;margin-top:8px" onclick="partMenu(\'' + p.tracking + '\',\'' + p.cni + '\')">⋯ Options</button>') +
+        '<div class="small" style="margin-top:2px">' + partStatus(p) + '</div>' +
+        '<div class="small" style="margin-top:2px">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') + '</div>' +
+        (name ? '<div style="font-weight:600;font-size:14px;margin-top:2px">' + esc(name) + '</div>' : '') +
+        (done(p) ? '<div class="small" style="margin-top:4px;color:var(--green)">Picked up ✅</div>'
+          : f && f.returned ? '<div class="small" style="margin-top:4px;color:var(--red)">↩ Went back to the shipper — no pickup</div>' : '') +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;align-items:stretch;gap:6px;width:118px">' + chip +
+        (done(p) || (f && f.returned) ? '' : '<button class="act" style="padding:7px 8px;font-size:13px" onclick="partMenu(\'' + p.tracking + '\',\'' + p.cni + '\')">⋯ Options</button>') +
+      '</div>' +
     '</div>';
   };
   const grouped = list => {
