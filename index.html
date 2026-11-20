@@ -217,7 +217,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.43';
+const APP_VERSION = '3.47';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ let session = store.get('rw_session', null);   // { pin, user, techs }
 async function api(op, extra) {
   let res, j;
   try {
-    res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action: 'app', op, pin: session && session.pin }, extra || {})) });
+    res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action: 'app', op }, extra || {}, { pin: session && session.pin })) });
     j = await res.json();
   } catch (e) { throw Object.assign(new Error(navigator.onLine ? 'Could not reach the server' : 'No signal'), { offline: true }); }
   if (j.auth) { logout(); throw new Error(j.error || 'Signed out'); }
@@ -324,7 +324,7 @@ function start() {
       session.techs = j.techs; store.set('rw_session', session); fillTechs();
     }).catch(() => {});
   } else sel.classList.add('hidden');
-  $('#nav-pay').classList.toggle('hidden', !!u.admin);
+  $('#nav-pay').classList.toggle('hidden', !!u.admin && (!u.tech || u.tech === 'ADMIN'));   // a tech who's also admin keeps My pay
   $('#nav-admin').classList.toggle('hidden', !u.admin);
   flushQueue();
   const cached = store.get('rw_jobs_' + u.name + '_' + techFilter, null);
@@ -343,6 +343,7 @@ async function refresh(loud) {
   try {
     const j = await api('jobs', { tech: techFilter });
     jobs = j.jobs; lastAt = j.at; offline = false;
+    if (session.user.admin && (!rqData || Date.now() - (rqData.loaded || 0) > 120e3)) loadRq().catch(() => {});
     flushQueue();
     setUnread(j.unread);
     store.set('rw_jobs_' + session.user.name + '_' + techFilter, { jobs, at: lastAt });
@@ -395,7 +396,8 @@ function jobCard(j) {
     (j.device ? '<div class="meta">' + KIND[deviceKind(j)] + ' ' + esc(j.device) + (deviceBrand(j) !== 'other' && !new RegExp(deviceBrand(j), 'i').test(j.device) ? ' · ' + deviceBrand(j) : '') + '</div>' : '') +
     '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
-      (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') + '</div>' +
+      (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') +
+      (j.custWaiting ? ' <span class="chip amber">✉ Customer replied</span>' : '') + (j.hemAsk ? ' <span class="chip amber">❓ HEM asked</span>' : '') + '</div>' +
     (j.parts || []).map(p => '<div class="small" style="margin-top:4px">📦 …<span class="last4">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + (p.part ? ' · ' + esc(p.part) : '') + '</div>').join('') +
     (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
   '</div>';
@@ -708,6 +710,7 @@ async function openJob(cni) {
     const d = (await api('details', { cni })).details;
     store.set('rw_det_' + cni, d);
     if ($('#det')) $('#det').innerHTML = detailsHtml(d);
+    if ($('#pbox') && d.partInfo) $('#pbox').outerHTML = partsBox(j, d.partInfo);
   } catch (e) { if ($('#det') && !seen) $('#det').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 }
 // Every job's details in one request after the list loads, so opening any ticket is instant
@@ -730,12 +733,25 @@ function egg(t) {
 }
 // Tracking number with the last 4 digits large: what the tech reads off the box at FedEx
 const trackHtml = t => esc(t.slice(0, -4)) + '<b>' + esc(t.slice(-4)) + '</b>' + egg(t);
-function partsBox(j) {
+function partsBox(j, info) {
   const list = j.parts || [];
   if (!list.length) return '';
-  return list.map(p => '<div class="partbox"><div class="lbl">📦 Part to bring' + (list.length > 1 ? ' · ' + (list.indexOf(p) + 1) + ' of ' + list.length : '') + '</div>' +
+  return '<div id="pbox">' + list.map(p => '<div class="partbox"><div class="lbl">📦 Part to bring' + (list.length > 1 ? ' · ' + (list.indexOf(p) + 1) + ' of ' + list.length : '') + '</div>' +
     '<div class="trk">' + trackHtml(p.tracking) + '</div>' +
-    (p.part ? '<div class="pn">' + esc(p.part) + '</div>' : '<div class="small">Part not named in the note — check the dispatch email below</div>') + '</div>').join('');
+    (p.part ? '<div class="pn">' + esc(p.part) + '</div>' : '<div class="small">Part not named in the note — check the dispatch email below</div>') +
+    partStatusLine(info ? info[p.tracking] : undefined) + '</div>').join('') + '</div>';
+}
+// FedEx status (where it is, pickup countdown) + what Fieldcode says
+function partStatusLine(i) {
+  if (i === undefined) return '<div class="small" style="margin-top:6px;color:var(--sub)"><span class="spin"></span> checking status…</div>';
+  if (!i) return '';
+  const when = iso => { const x = Date.parse(iso); return isNaN(x) ? '' : new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  const f = i.fedex;
+  const chip = f && f.held && !f.delivered && !f.returned && f.daysLeft != null ? '<div style="margin-top:4px">' + returnChip(f) + '</div>'
+    : f && f.returned ? '<div style="margin-top:4px">' + partChip(f) + '</div>' : '';
+  const fc = i.fc ? '<div class="small" style="color:var(--sub)">Fieldcode: ' + esc(i.fc.status || '—') + (i.fc.received ? ' · received ' + esc(when(i.fc.received)) + (i.fc.receivedBy ? ' by ' + esc(i.fc.receivedBy) : '')
+    : i.fc.eta ? ' · ETA ' + esc(when(i.fc.eta)) : '') + (i.fc.pudo ? ' · FedEx hold' : i.fc.address ? ' · ships to site' : '') + '</div>' : '';
+  return '<div style="margin-top:6px;font-size:13px">' + partStatus({ fedex: f, markedPickedUp: i.markedPickedUp }) + '</div>' + chip + fc;
 }
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
@@ -746,7 +762,7 @@ function jobTop(j) {
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
       (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
       '<div style="margin-top:6px">' + apptChip(j) + (j.lsdt ? ' <span class="chip amber">SLA ' + esc(j.lsdt) + '</span>' : '') + '</div>' +
-    '</div>' + partsBox(j) +
+    '</div>' + waitingBox(j) + partsBox(j, (store.get('rw_det_' + j.cni, null) || {}).partInfo) +
     '<div class="actions">' +
       '<a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a>' +
       '<span id="dial-slot">' + dialBtn(phones[0]) + '</span>' +
@@ -898,7 +914,7 @@ function detailsHtml(d) {
   if (d.fieldcode) h += '<div class="sec"><h3>Fieldcode</h3><div class="card">' + kv(d.fieldcode, ['Imported', 'Fieldcode Id']) + '</div></div>';
   if (d.draft) h += '<div class="sec"><h3>Customer</h3><div class="card">' + kv({ Name: d.draft.customer, Email: d.draft.email, Model: d.draft.model, Drafted: d.draft.drafted }) + '</div></div>';
   if (d.index) h += '<div class="sec"><h3>Ticket index</h3><div class="card">' + kv({ Tech: d.index.tech, Location: d.index.location, 'CNE / WO': d.index.cne }) + '</div></div>';
-  h += '<div class="sec"><h3>Emails</h3><div id="emails">' + (d.emails ? emailsHtml(d.emails) :
+  h += '<div class="sec"><h3>Emails</h3><div id="emails">' + (d.emails ? emailsHtml(d.emails, d.cni) :
        '<button class="act" style="width:100%" onclick="loadEmails(\'' + d.cni + '\')">Load emails about this ticket</button>') + '</div></div>';
   return h;
 }
@@ -930,13 +946,15 @@ function toggleCardView() {
   v.innerHTML = cardBody(!toText);
   t.textContent = toText ? 'Show formatted' : 'Show as text';
 }
-function emailsHtml(list) {
-  return list.length ? list.map(m => '<div class="card"><div class="small">' + esc(m.date) + ' · ' + esc(m.from) + '</div><div class="co" style="font-size:14px">' + esc(m.subject) + '</div><div class="pre small" style="margin-top:4px">' + esc(m.text) + '</div></div>').join('')
+function emailsHtml(list, cni) {
+  window.__mails = list;
+  return list.length ? list.map((m, k) => '<div class="card"><div class="small">' + esc(m.date) + ' · ' + esc(m.from) + (m.customer ? ' <span class="chip blue">customer</span>' : '') + '</div><div class="co" style="font-size:14px">' + esc(m.subject) + '</div><div class="pre small" style="margin-top:4px">' + esc(m.text) + '</div>' +
+      (m.customer && m.id && cni ? '<div class="actions" style="margin-top:8px"><button class="act" onclick="openReply(\'' + cni + '\',' + k + ',\'confirm\')">✅ Confirm</button><button class="act" onclick="openReply(\'' + cni + '\',' + k + ',\'propose\')">📅 Propose</button><button class="act" onclick="openReply(\'' + cni + '\',' + k + ',\'custom\')">✍ Reply</button></div>' : '') + '</div>').join('')
                      : '<div class="empty">No emails found</div>';
 }
 async function loadEmails(cni) {
   $('#emails').innerHTML = '<div class="empty"><span class="spin"></span></div>';
-  try { $('#emails').innerHTML = emailsHtml((await api('details', { cni, emails: true })).details.emails || []); }
+  try { $('#emails').innerHTML = emailsHtml((await api('details', { cni, emails: true })).details.emails || [], cni); }
   catch (e) { $('#emails').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 }
 function linkify(t) {
@@ -1584,7 +1602,8 @@ async function renderPay() {
 let adminTab = store.get('rw_admin_tab', 'dash'), searchQ = '', searchT = null, scoreDays = 60;
 function adminTabsHtml() {
   const n = fcData ? fcData.tickets.filter(t => t.toDispatch).length : 0;
-  return '<div class="seg" id="admin-tabs" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['fc', 'Dispatch' + (n ? ' · ' + n : '')], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
+  const rn = rqData ? rqData.items.length : 0;
+  return '<div class="seg" id="admin-tabs" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['replies', 'Replies' + (rn ? ' · ' + rn : '')], ['fc', 'Dispatch' + (n ? ' · ' + n : '')], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
     '<button class="' + (adminTab === k ? 'on' : '') + '" onclick="adminTab=\'' + k + '\';store.set(\'rw_admin_tab\',adminTab);renderAdmin()">' + l + '</button>').join('') + '</div>';
 }
 function renderAdmin() {
@@ -1594,7 +1613,8 @@ function renderAdmin() {
   // keep the "Dispatch · N" count fresh (the Dispatch tab loads its own list)
   if (adminTab !== 'fc' && (!fcData || Date.now() - (fcData.loaded || 0) > 120e3)) api('fclist').then(d => {
     d.loaded = Date.now(); fcData = d; const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); }).catch(() => {});
-  const r = { dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores }[adminTab] || renderDash;
+  if (adminTab !== 'replies' && (!rqData || Date.now() - (rqData.loaded || 0) > 120e3)) loadRq().then(() => { const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); }).catch(() => {});
+  const r = { replies: renderRq, dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores }[adminTab] || renderDash;
   r();
 }
 const jobRow = (r, extra) => '<div class="card job" onclick="openJob(\'' + r.cni + '\')"><div class="row between"><span class="co">' + esc(r.company || 'CNI ' + r.cni) + '</span><b>' + esc(r.tech) + '</b></div>' +
@@ -1613,6 +1633,7 @@ async function renderDash() {
     const lsdt = r => { const t = Date.parse(r.lsdt); return isNaN(t) ? '' : 'SLA ' + new Date(t).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
     const sec = (title, list, extra) => list.length ? '<div class="group">' + title + ' · ' + list.length + '</div>' + list.slice(0, 25).map(r => jobRow(r, extra(r))).join('') : '';
     box.innerHTML = '<div class="small" style="margin:0 4px 6px">' + d.total + ' open jobs</div>' + table +
+      sec('💬 Waiting on us', d.lists.waiting || [], r => r.waiting || '') +
       sec('⏰ Past SLA, not scheduled ahead', d.lists.pastLsdt, lsdt) +
       sec('⏳ SLA in the next 24 h, not scheduled', d.lists.lsdtSoon, lsdt) +
       sec('📞 3+ contact attempts', d.lists.attempts3, r => r.attempts + ' attempts') +
@@ -1992,10 +2013,10 @@ async function fcDispatch(cni, again) {
   const tech = ($('#fc-tech') || {}).value;
   if (!tech) return toast('Pick a tech');
   const o = id => { const e = $('#' + id); return !!(e && e.checked && !e.disabled); };
-  const opts = { cni, tech, sendTech: o('fc-o-tech'), custDraft: o('fc-o-cust'), pin: o('fc-o-pin'), fedexPin: o('fc-o-fdx'), again: !!again };
-  if (!opts.sendTech && !opts.custDraft && !opts.pin) return toast('Nothing ticked');
+  const opts = { cni, tech, sendTech: o('fc-o-tech'), custDraft: o('fc-o-cust'), pinMap: o('fc-o-pin'), fedexPin: o('fc-o-fdx'), again: !!again };
+  if (!opts.sendTech && !opts.custDraft && !opts.pinMap) return toast('Nothing ticked');
   if (!again) {
-    const what = [opts.sendTech && 'email ' + techName(tech), opts.custDraft && 'save the customer draft', opts.pin && 'pin it on the map'].filter(Boolean).join(', ');
+    const what = [opts.sendTech && 'email ' + techName(tech), opts.custDraft && 'save the customer draft', opts.pinMap && 'pin it on the map'].filter(Boolean).join(', ');
     if (!(await sure('🚀 Dispatch CNI ' + esc(cni) + ' to ' + esc(techName(tech)) + '?<div class="small" style="font-weight:400;margin-top:6px">This will ' + esc(what) + ', and log it like Draft Emails does.</div>', 'Dispatch'))) return;
   }
   const b = $('#fc-go'); if (b) { b.disabled = true; b.innerHTML = '<span class="spin"></span> Dispatching…'; }
@@ -2003,7 +2024,7 @@ async function fcDispatch(cni, again) {
     const r = await api('fcdispatch', opts);
     flash('Dispatched', r.tech + ' · ' + r.done.length + ' step' + (r.done.length === 1 ? '' : 's') + (r.warn.length ? ' · ⚠ ' + r.warn.length : ''), '🚀');
     if (r.warn.length) setTimeout(() => toast('⚠ ' + r.warn.join(' · '), 7000), 2100);
-    const ft = fcData && fcData.tickets.find(x => x.cni === cni); if (ft) { ft.toDispatch = false; ft.drafted = new Date().toISOString(); ft.pinQueued = opts.pin; }
+    const ft = fcData && fcData.tickets.find(x => x.cni === cni); if (ft) { ft.toDispatch = false; ft.drafted = new Date().toISOString(); ft.pinQueued = opts.pinMap; }
     if (b) { b.textContent = '✓ Dispatched'; }
     fcCur = null; refresh();
   } catch (e) {
@@ -2014,6 +2035,139 @@ async function fcDispatch(cni, again) {
     }
     toast(e.message, 6000); if (b) { b.disabled = false; b.textContent = '🚀 Dispatch to ' + techName(tech); }
   }
+}
+
+// ── Waiting on us: customer replied / HEM asked (top of the ticket) ───────
+function waitingBox(j) {
+  let h = '';
+  if (j.custWaiting) h += '<div class="card" style="border:2px solid var(--amber)"><div class="row between"><b style="color:var(--amber)">✉ Customer replied — waiting on us</b><span class="small">' + esc(ago(j.custWaiting.time)) + '</span></div>' +
+    '<div class="small" style="margin-top:2px">' + esc(j.custWaiting.from) + '</div><div class="small pre" style="margin-top:4px;max-height:7em;overflow:auto">' + esc(j.custWaiting.text) + '</div>' +
+    (j.custWaiting.id ? '<div class="actions" style="margin-top:8px"><button class="act" onclick="openReply(\'' + j.cni + '\',-1,\'confirm\')">✅ Confirm</button><button class="act" onclick="openReply(\'' + j.cni + '\',-1,\'propose\')">📅 Propose</button><button class="act" onclick="openReply(\'' + j.cni + '\',-1,\'custom\')">✍ Reply</button></div>' : '') + '</div>';
+  if (j.hemAsk) h += '<div class="card" style="border:2px solid var(--amber)"><div class="row between"><b style="color:var(--amber)">❓ HEM asked</b><span class="small">' + esc(ago(j.hemAsk.time)) + ' · ' + esc(j.hemAsk.who) + '</span></div>' +
+    '<div class="small pre" style="margin-top:4px;max-height:7em;overflow:auto">' + esc(j.hemAsk.text) + '</div>' +
+    (session.user.admin ? '<button class="act" style="width:100%;margin-top:8px" onclick="answerHem(\'' + j.cni + '\')">💬 Answer HEM in the general chat</button>' : '<div class="small" style="margin-top:6px;color:var(--sub)">Dispatch will answer — send a 💬 Update if you have news.</div>') + '</div>';
+  return h;
+}
+async function answerHem(cni) {
+  const text = await ask('💬 Answer HEM · posts “CNI ' + esc(cni) + ' - …” in the general chat', { placeholder: 'e.g. Tech is scheduled for Mon 11/23 9-12', required: 'Write the answer first', ok: 'Post' });
+  if (text === null) return;
+  try { await api('hemreply', { cni, text }); flash('Posted to HEM', 'General chat', '💬'); const j = jobs.find(x => x.cni === cni); if (j) j.hemAsk = null; rqDrop(cni, 'hem'); }
+  catch (e) { toast(e.message, 5000); }
+}
+// ── Reply to a customer email ─────────────────────────────────────────────
+const WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+function guessWhen(text, baseIso) {
+  const t = String(text || ''), base = new Date(Date.parse(baseIso) || Date.now());
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  let date = '';
+  const md = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (md) { const y = md[3] ? (md[3].length === 2 ? 2000 + +md[3] : +md[3]) : base.getFullYear(); const d = new Date(y, +md[1] - 1, +md[2]); if (!md[3] && d < new Date(base.getFullYear(), base.getMonth(), base.getDate() - 7)) d.setFullYear(y + 1); date = iso(d); }
+  else if (/\btomorrow\b/i.test(t)) { const d = new Date(base); d.setDate(d.getDate() + 1); date = iso(d); }
+  else { const w = t.match(/\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/i);
+    if (w) { const want = WD.findIndex(x => x.startsWith(w[1].toLowerCase())); const d = new Date(base); d.setDate(d.getDate() + 1); while (d.getDay() !== want) d.setDate(d.getDate() + 1); date = iso(d); } }
+  // an explicit window first ("9-12", "10am to 2pm"), then a single time, then words
+  const tm = t.match(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|–|to)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)?(?![\d\/])/i) ||
+    t.match(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)\b/i) || t.match(/\b(?:morning|afternoon|anytime|any time|all day)\b/i);
+  return { date, time: tm ? tm[0].trim().replace(/\s+/g, ' ') : '' };
+}
+function replyText(kind, first, date, time) {
+  const day = date ? new Date(date + 'T12:00').toLocaleDateString([], { weekday: 'long', month: 'numeric', day: 'numeric' }) : '[day]';
+  const sign = '\n\nThank you,\n' + (session.user.admin ? 'Rewind Repair Dispatch' : session.user.name + ', Rewind Repair');
+  if (kind === 'confirm') return 'Hi ' + first + ',\n\n' + day + (time ? ' (' + time + ')' : '') + ' works. Our technician will see you then. If anything changes, just reply to this email.' + sign;
+  if (kind === 'propose') return 'Hi ' + first + ',\n\nUnfortunately that time doesn\'t work for our technician. Would ' + day + (time ? ' between ' + time : '') + ' work for you instead? Please reply to confirm, or suggest another time.' + sign;
+  return 'Hi ' + first + ',\n\n' + sign.trim();
+}
+function openReply(cni, k, kind) {
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  const q = k === -2 ? (rqData && rqData.items.find(x => x.cni === cni && x.kind === 'customer')) : null;
+  const m = k >= 0 ? (window.__mails || [])[k] : q ? { id: q.id, from: q.from, text: q.text, iso: q.since }
+    : j.custWaiting ? { id: j.custWaiting.id, from: j.custWaiting.from, text: j.custWaiting.text, iso: j.custWaiting.time } : null;
+  if (!m || !m.id) return toast('Email not found');
+  const nm = String(m.from || '').replace(/<.*$/, '').trim();
+  const first = (nm.includes(',') ? nm.split(',')[1] : nm).trim().split(/\s+/)[0] || 'there';
+  const g = kind === 'confirm' ? guessWhen(m.text, m.iso) : { date: '', time: '' };
+  const dated = kind !== 'custom';
+  sheet((kind === 'confirm' ? '✅ Confirm' : kind === 'propose' ? '📅 Propose a time' : '✍ Reply') + ' · CNI ' + esc(cni),
+    '<div class="card small"><b>' + esc(m.from) + '</b><div class="pre" style="margin-top:4px;max-height:8em;overflow:auto">' + esc(m.text) + '</div></div>' +
+    (dated ? '<div class="row" style="gap:8px"><label class="f" style="flex:1"><span>Date</span><input class="in" type="date" id="rp-date" value="' + esc(g.date) + '"></label>' +
+      '<label class="f" style="flex:1"><span>Time window</span><input class="in" id="rp-time" placeholder="e.g. 9-12" value="' + esc(g.time) + '"></label></div>' : '') +
+    '<label class="f"><span>Reply (Reply All — the tech stays on cc)</span><textarea class="in" id="rp-text" style="min-height:190px">' + esc(replyText(kind, first, g.date, g.time)) + '</textarea></label>' +
+    (kind === 'confirm' ? '<label class="row" style="gap:10px;margin:2px 2px 12px"><input type="checkbox" id="rp-sched" checked> <span>Also schedule it: sets the appointment, updates the pin and posts “Scheduled for …” in the HEM chat</span></label>' : '') +
+    '<button class="act primary" style="width:100%;padding:13px" id="rp-go">Send reply</button>');
+  let edited = false;
+  $('#rp-text').addEventListener('input', () => { edited = true; });
+  const upd = () => { if (!edited) $('#rp-text').value = replyText(kind, first, $('#rp-date').value, $('#rp-time').value.trim()); };
+  if (dated) { $('#rp-date').addEventListener('change', upd); $('#rp-time').addEventListener('input', upd); }
+  $('#rp-go').onclick = async () => {
+    const date = dated ? $('#rp-date').value : '', time = dated ? $('#rp-time').value.trim() : '';
+    if (dated && !date) return toast('Pick a date');
+    if (/\[day\]/.test($('#rp-text').value)) return toast('Fill in the day in the reply');
+    const b = $('#rp-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…';
+    try {
+      const r = await api('replycust', { cni, id: m.id, kind, date, time, text: $('#rp-text').value, schedule: kind === 'confirm' && $('#rp-sched').checked, name: nm });
+      flash('Reply sent', r.posted || (kind === 'propose' ? 'Proposed ' + date : 'Reply All from dispatch@'), '✉');
+      const jj = jobs.find(x => x.cni === cni); if (jj) { jj.custWaiting = null; if (r.posted) jj.appt = { date, time }; }
+      rqDrop(cni, 'customer');
+      closeSheet(); history.back(); refresh();
+    } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = 'Send reply'; }
+  };
+}
+
+// ── Replies queue (admins): customer emails + HEM questions waiting on us, oldest first ─────
+let rqData = null, rqFilter = 'all';
+async function loadRq() { rqData = await api('replyqueue'); rqData.loaded = Date.now(); setAdminDot(); return rqData; }
+function setAdminDot() {
+  const b = $('#nav-admin'); if (!b || !rqData) return;
+  let d = b.querySelector('.rq-dot'); const n = rqData.items.length;
+  if (!n) { if (d) d.remove(); return; }
+  if (!d) { d = document.createElement('span'); d.className = 'rq-dot badge'; d.style.cssText = 'position:absolute;margin:-4px 0 0 14px;font-size:10px'; b.style.position = 'relative'; b.appendChild(d); }
+  d.textContent = n > 99 ? '99+' : n;
+}
+function rqDrop(cni, kind) {
+  if (!rqData) return;
+  rqData.items = rqData.items.filter(x => !(x.cni === cni && x.kind === kind));
+  setAdminDot(); const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml();
+  if (view === 'admin' && adminTab === 'replies') rqList();
+}
+async function renderRq(fresh) {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="row" style="margin:0 4px 8px;gap:6px;flex-wrap:wrap"><div class="seg">' + [['all', 'All'], ['customer', '✉ Customers'], ['hem', '❓ HEM']].map(([k, l]) =>
+    '<button class="' + (rqFilter === k ? 'on' : '') + '" onclick="rqFilter=\'' + k + '\';rqList()">' + l + '</button>').join('') + '<button onclick="renderRq(true)">↻</button></div></div><div id="rq-list"><div class="empty"><span class="spin"></span></div></div>';
+  if (!rqData || fresh || Date.now() - (rqData.loaded || 0) > 60e3) {
+    try { await loadRq(); const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); } catch (e) { $('#rq-list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  }
+  rqList();
+}
+function rqAge(iso) {
+  const h = (Date.now() - Date.parse(iso)) / 3600e3;
+  const cls = h >= 4 ? 'red' : h >= 1 ? 'amber' : 'green';
+  return '<span class="chip ' + cls + '">⏱ ' + (h < 1 ? Math.max(1, Math.round(h * 60)) + ' min' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' d') + '</span>';
+}
+function rqList() {
+  const el = $('#rq-list'); if (!el || !rqData) return;
+  document.querySelectorAll('#admin-body .seg button').forEach(b => b.classList.toggle('on', b.getAttribute('onclick') === "rqFilter='" + rqFilter + "';rqList()"));
+  const list = rqData.items.filter(x => rqFilter === 'all' || x.kind === rqFilter);
+  const old = rqData.items.filter(x => Date.now() - Date.parse(x.since) > rqData.alertH * 3600e3).length;
+  el.innerHTML = '<div class="small" style="margin:0 4px 8px"><b>' + rqData.items.length + ' waiting</b>' + (old ? ' · <span style="color:var(--red)">' + old + ' over ' + rqData.alertH + ' h</span>' : '') +
+      ' · ' + rqData.answered24h + ' answered in the app in the last 24 h</div>' +
+    (list.length ? list.map(x => { const cust = x.kind === 'customer';
+      return '<div class="card" style="border-left:4px solid var(--' + ((Date.now() - Date.parse(x.since)) / 3600e3 >= 4 ? 'red' : 'amber') + ')">' +
+        '<div class="row between"><span class="co">' + (cust ? '✉ ' : '❓ ') + esc(x.company || 'CNI ' + x.cni) + '</span>' + rqAge(x.since) + '</div>' +
+        '<div class="small">CNI ' + esc(x.cni) + (x.city ? ' · ' + esc(x.city) : '') + (x.tech ? ' · <b>' + esc(x.tech) + '</b>' : '') + (x.status ? ' · ' + esc(x.status) : '') + (x.inApp ? '' : ' · not in the app') + '</div>' +
+        '<div class="small" style="margin-top:6px"><b>' + esc(x.from || (cust ? 'Customer' : 'HEM')) + '</b>' + (cust ? ' (customer)' : ' (HEM)') + '</div>' +
+        '<div class="small pre" style="margin-top:2px;max-height:6.5em;overflow:auto">' + esc(x.text) + '</div>' +
+        '<div class="actions" style="margin-top:8px;grid-template-columns:' + (cust ? '1fr 1fr 1fr' : '2fr 1fr') + '">' +
+          (cust ? '<button class="act" onclick="openReply(\'' + x.cni + '\',-2,\'confirm\')">✅ Confirm</button><button class="act" onclick="openReply(\'' + x.cni + '\',-2,\'propose\')">📅 Propose</button><button class="act" onclick="openReply(\'' + x.cni + '\',-2,\'custom\')">✍ Reply</button>'
+                : '<button class="act" onclick="answerHem(\'' + x.cni + '\')">💬 Answer HEM</button>' + (x.inApp ? '<button class="act" onclick="openJob(\'' + x.cni + '\')">📄 Ticket</button>' : '<button class="act" onclick="openFc(\'' + x.cni + '\')">📄 Ticket</button>')) + '</div>' +
+        '<div class="row between" style="margin-top:6px">' + (cust && x.inApp ? '<a href="#" class="small" onclick="event.preventDefault();openJob(\'' + x.cni + '\')">Open ticket</a>' : '<span></span>') +
+          '<a href="#" class="small" onclick="event.preventDefault();rqHandled(\'' + x.cni + '\',\'' + x.kind + '\')">✓ Handled — no reply needed</a></div></div>'; }).join('')
+      : '<div class="empty">Nothing waiting on us 🎉</div>');
+}
+async function rqHandled(cni, kind) {
+  const note = await ask('✓ Mark as handled · CNI ' + esc(cni), { placeholder: 'Optional: how it was handled (e.g. called the customer)', ok: 'Mark handled' });
+  if (note === null) return;
+  try { await api('handled', { cni, kind, note }); rqDrop(cni, kind); toast('Marked handled'); const j = jobs.find(x => x.cni === cni); if (j) { if (kind === 'hem') j.hemAsk = null; else j.custWaiting = null; } }
+  catch (e) { toast(e.message, 5000); }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
