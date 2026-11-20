@@ -114,6 +114,8 @@
   .partbox .trk { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; color: var(--sub); margin-top: 2px; }
   .partbox .trk b { font-size: 26px; color: var(--accent); letter-spacing: .04em; }
   .partbox .pn { font-size: 15px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+  .egg { display: inline-block; margin-left: 4px; font-size: .8em; animation: egg 1.6s ease-in-out infinite; cursor: default; }
+  @keyframes egg { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-14deg) scale(1.15); } 40% { transform: rotate(10deg); } 60% { transform: rotate(0); } }
   .last4 { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; color: var(--accent); }
   .act:disabled { opacity: .45; }
   .act.wide { grid-column: span 3; padding: 13px; font-size: 15px; }
@@ -201,7 +203,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.31';
+const APP_VERSION = '3.32';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -356,7 +358,7 @@ function jobCard(j) {
     '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') + '</div>' +
-    (j.parts || []).map(p => '<div class="small" style="margin-top:4px">📦 …<span class="last4">' + esc(p.tracking.slice(-4)) + '</span>' + (p.part ? ' · ' + esc(p.part) : '') + '</div>').join('') +
+    (j.parts || []).map(p => '<div class="small" style="margin-top:4px">📦 …<span class="last4">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + (p.part ? ' · ' + esc(p.part) : '') + '</div>').join('') +
     (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
   '</div>';
 }
@@ -616,8 +618,15 @@ async function prefetchDetails() {
     try { Object.keys(localStorage).filter(k => /^rw_det_/.test(k) && !open.has(k.slice(7))).forEach(k => localStorage.removeItem(k)); } catch (e) {}
   } catch (e) { /* the per-ticket request still works */ }
 }
+// Little rewards in the last 4 digits
+function egg(t) {
+  const l4 = String(t || '').slice(-4);
+  const e = l4 === '6666' ? ['😈', 'the beast'] : /69$/.test(l4) ? ['😏', 'nice'] : /67$/.test(l4) ? ['🤷', 'six seven']
+    : /^\d000$/.test(l4) ? ['🎯', 'nice round number'] : null;
+  return e ? '<span class="egg" title="' + e[1] + '">' + e[0] + '</span>' : '';
+}
 // Tracking number with the last 4 digits large: what the tech reads off the box at FedEx
-const trackHtml = t => esc(t.slice(0, -4)) + '<b>' + esc(t.slice(-4)) + '</b>';
+const trackHtml = t => esc(t.slice(0, -4)) + '<b>' + esc(t.slice(-4)) + '</b>' + egg(t);
 function partsBox(j) {
   const list = j.parts || [];
   if (!list.length) return '';
@@ -967,13 +976,14 @@ function renderParts() {
   const partRow = p => {
     const f = p.fedex;
     return '<div class="loc-part"><div class="row between"><span class="trk" style="font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--sub)">' +
-        esc(p.tracking.slice(0, -4)) + '<span class="last4" style="font-size:17px">' + esc(p.tracking.slice(-4)) + '</span></span>' + partChip(f) + '</div>' +
+        esc(p.tracking.slice(0, -4)) + '<span class="last4" style="font-size:17px">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + '</span>' +
+        (f && f.held && f.daysLeft != null && !f.returned ? returnChip(f) : f && (f.returned || f.delivered) ? partChip(f) : '') + '</div>' +
+      '<div class="small" style="margin-top:2px">' + partStatus(p) + '</div>' +
       '<div class="small" style="margin-top:2px">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (admin ? ' · <b>' + esc(p.tech) + '</b>' : '') + '</div>' +
       (p.line && p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim() ? '<div style="font-weight:600;font-size:14px;margin-top:2px">' + esc(p.line.replace(p.tracking, '').replace(/^[\s\-–:·]+/, '').trim()) + '</div>' : '') +
-      (f && f.daysLeft != null && !f.returned && !done(p) && f.held ? '<div class="small" style="margin-top:4px"><a href="#" onclick="event.preventDefault();extendHold(\'' + p.tracking + '\',\'' + p.cni + '\')">Hold extended?</a></div>' : '') +
       (done(p) ? '<div class="small" style="margin-top:6px;color:var(--green)">Picked up ✅</div>'
         : f && f.returned ? '<div class="small" style="margin-top:6px;color:var(--red)">↩ Went back to the shipper — no pickup</div>'
-        : '<button class="act" style="width:100%;margin-top:8px" onclick="pickedUp(\'' + p.tracking + '\',\'' + p.cni + '\',this)">✓ I picked it up</button>') +
+        : '<button class="act" style="width:100%;margin-top:8px" onclick="partMenu(\'' + p.tracking + '\',\'' + p.cni + '\')">⋯ Options</button>') +
     '</div>';
   };
   const grouped = list => {
@@ -992,6 +1002,26 @@ function renderParts() {
       ' Picked up · ' + gone.length + '</div>' + (partsShowDone ? grouped(gone) : '') : '');
 }
 let partsShowDone = false;
+// Where the package is, in words: "Ready for pickup · Clearwater, FL · 11/16 1:52 PM"
+function partStatus(p) {
+  const f = p.fedex;
+  if (p.markedPickedUp && !(f && f.delivered)) return '<b>Picked up</b> (marked in the app)';
+  if (!f) return '<b>No FedEx status yet</b>';
+  const what = f.returned ? 'Returning to shipper' : f.delivered ? (f.onsite ? 'Delivered to the address' : 'Picked up' + (f.receivedBy ? ' by ' + f.receivedBy : ''))
+    : f.held ? 'Ready for pickup' : f.status || 'In transit';
+  return '<b>' + esc(what) + '</b>' + [f.where, f.at].filter(Boolean).map(x => ' · ' + esc(x)).join('');
+}
+function partMenu(tracking, cni) {
+  const p = (parts || []).find(x => x.tracking === tracking) || { tracking, cni };
+  const f = p.fedex || {};
+  menu('Part …' + esc(tracking.slice(-4)) + egg(tracking) + ' · CNI ' + esc(cni), [
+    { label: '✓ I picked it up', wide: true, fn: b => pickedUp(tracking, cni, b) },
+    { label: '⏳ Hold extended', sub: f.held ? 'FedEx gave more days' : 'only once it\'s at FedEx', disabled: !f.held, fn: () => extendHold(tracking, cni) },
+    { label: '📄 Open ticket', sub: 'CNI ' + esc(cni), fn: () => openJob(cni) },
+    { label: '🔎 FedEx tracking', href: 'https://www.fedex.com/fedextrack/?trknbr=' + encodeURIComponent(tracking) },
+    { label: '📋 Copy number', fn: () => { try { navigator.clipboard.writeText(tracking); toast('Copied ' + tracking); } catch (e) { toast(tracking, 5000); } } },
+  ]);
+}
 function partChip(f) {
   if (!f) return '<span class="chip">No FedEx status</span>';
   if (f.returned) return '<span class="chip red">↩ Returned to shipper' + (f.returnTracking ? ' · return #' + esc(f.returnTracking) : '') + '</span>';
