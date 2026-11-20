@@ -49,6 +49,12 @@
   .view { position: absolute; inset: 0; overflow-y: auto; padding: 8px 12px 16px; }
   #view-map { padding: 0; overflow: hidden; }
   #map { width: 100%; height: 100%; background: var(--panel2); }
+  .map-legend { background: rgba(20,20,30,.88); color: #eee; font: 11px/1.5 system-ui, sans-serif; padding: 6px 9px; border-radius: 9px; margin: 0 0 22px 8px; max-width: 220px; }
+  .map-legend b { cursor: pointer; display: block; }
+  .map-legend.shut div { display: none; }
+  .map-legend div { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; }
+  .map-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  .map-legend i.tag { border-radius: 3px; width: 14px; height: 9px; border: 1px solid #fff; }
   @media (min-width: 900px) {
     main.split #view-jobs, main.split #view-today { right: 50%; }
     main.split #view-map { left: 50%; display: block !important; border-left: 1px solid var(--line); }
@@ -203,7 +209,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.35';
+const APP_VERSION = '3.38';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -277,6 +283,14 @@ $('#code').addEventListener('keydown', e => { if (e.key === 'Enter') login(); })
 let jobs = [], parts = null, view = 'today', techFilter = 'ALL', search = '';
 let lastAt = null, offline = false;
 
+// Admin tech picker, A→Z by name, Owners last
+function fillTechs() {
+  const sel = $('#tech-pick');
+  session.techs.sort((a, b) => (a.tech === 'OWN') - (b.tech === 'OWN') || String(a.name).localeCompare(b.name));
+  sel.innerHTML = '<option value="ALL">All techs</option>' + session.techs.map(t =>
+    '<option value="' + esc(t.tech) + '">' + esc(t.name) + (t.area ? ' · ' + esc(t.area) : '') + '</option>').join('');
+  sel.value = session.techs.some(t => t.tech === techFilter) ? techFilter : 'ALL';
+}
 function start() {
   $('#login').classList.add('hidden');
   const u = session.user;
@@ -284,9 +298,13 @@ function start() {
   const sel = $('#tech-pick');
   if (u.admin) {
     techFilter = store.get('rw_tech', 'ALL');
-    sel.innerHTML = '<option value="ALL">All techs</option>' + session.techs.map(t =>
-      '<option value="' + esc(t.tech) + '">' + esc(t.name) + (t.area ? ' · ' + esc(t.area) : '') + '</option>').join('');
-    sel.value = techFilter; sel.classList.remove('hidden');
+    fillTechs();
+    sel.classList.remove('hidden');
+    // the list is saved at login; refresh it so new techs show without logging out
+    api('login').then(j => {
+      if (!j.techs || !j.techs.length) return;
+      session.techs = j.techs; store.set('rw_session', session); fillTechs();
+    }).catch(() => {});
   } else sel.classList.add('hidden');
   $('#nav-pay').classList.toggle('hidden', !!u.admin);
   $('#nav-admin').classList.toggle('hidden', !u.admin);
@@ -355,7 +373,8 @@ function jobCard(j) {
   const admin = session.user.admin && techFilter === 'ALL';
   return '<div class="card job" onclick="openJob(\'' + j.cni + '\')"' + (j.rpos ? ' style="border-left:4px solid var(--red)"' : '') + '>' +
     '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span><span>' + rposChip(j) + apptChip(j) + '</span></div>' +
-    '<div class="meta">' + esc([j.address || j.city, j.device].filter(Boolean).join(' · ')) + '</div>' +
+    '<div class="meta">' + esc(j.address || j.city || '') + '</div>' +
+    (j.device ? '<div class="meta">' + KIND[deviceKind(j)] + ' ' + esc(j.device) + (deviceBrand(j) !== 'other' && !new RegExp(deviceBrand(j), 'i').test(j.device) ? ' · ' + deviceBrand(j) : '') + '</div>' : '') +
     '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') + '</div>' +
@@ -423,18 +442,76 @@ function ensureMap() {
   s.async = true; s.onerror = () => { $('#map').innerHTML = '<div class="empty">Map could not load (offline?)</div>'; mapLoading = false; };
   document.head.appendChild(s);
 }
+// ── Pins: colour = status (or tech in the all-techs view), icon = device type, ring = brand ──
+const KIND = { laptop: '💻', desktop: '🖥️', printer: '🖨️', pos: '🛒', monitor: '🖵', other: '🔧' };
+const STATUS_FILL = { over: '#ff4d4d', today: '#2ee66b', soon: '#3fa9ff', none: '#ffb020' };
+function deviceKind(j) {
+  const d = String((j.device || '') + ' ' + (j.project || ''));
+  if (/engage|\bRP\d|retail|point of sale|\bpos\b/i.test(d)) return 'pos';
+  if (/x360|laptop|notebook|elitebook|probook|zbook|thinkpad|ideapad|thinkbook|yoga|chromebook|spectre|victus|omen|legion|dragonfly|\bbook\b|pavilion (?:\d|x)/i.test(d)) return 'laptop';
+  if (/printer|laserjet|officejet|pagewide|designjet|deskjet|envy (?:inspire|photo|\d{4})|\bmfp\b|smart ?tank|latex|neverstop|scanjet|\blj\b/i.test(d)) return 'printer';
+  if (/desktop|elitedesk|prodesk|eliteone|proone|thinkcentre|thinkstation|ideacentre|optiplex|all[- ]in[- ]one|\baio\b|workstation|tower|\bz\d+\s*g\d|\bmini\b/i.test(d)) return 'desktop';
+  if (/monitor|display|\bthinkvision\b|\be\d{2}\b|\bp\d{2}\b/i.test(d)) return 'monitor';
+  return 'other';
+}
+function deviceBrand(j) {
+  const d = String((j.device || '') + ' ' + (j.project || ''));
+  if (/lenovo|\blnv\b|thinkpad|thinkcentre|thinkstation|thinkbook|thinkvision|ideapad|ideacentre|legion|yoga/i.test(d)) return 'Lenovo';
+  if (/\bhpi?\b|hewlett|elitebook|probook|zbook|elitedesk|prodesk|eliteone|proone|laserjet|officejet|pagewide|designjet|deskjet|engage|omen|victus|spectre|envy|pavilion/i.test(d)) return 'HP';
+  return 'other';
+}
+function statusKey(j) {
+  if (!j.appt) return 'none';
+  const t = todayISO();
+  return j.appt.date < t ? 'over' : j.appt.date === t ? 'today' : 'soon';
+}
+// Teardrop pin as an SVG image: status / tech colour fills the body, white outline so it stands out on
+// the dark map, device icon in a small white disc, tag (brand or tech) on a brand-coloured label
+const BRAND_TAG = { HP: '#0a5bd6', Lenovo: '#d61f1f', other: '#222' };
+function pinIcon(fill, brand, glyph, tag, big) {
+  const w = big ? 46 : 40, h = Math.round(w * 1.35);
+  const tw = tag ? tag.length * 6.2 + 8 : 0;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 40 54">' +
+    '<path d="M20 52 C20 52 3 33 3 20 A17 17 0 1 1 37 20 C37 33 20 52 20 52 Z" fill="' + fill + '" stroke="#fff" stroke-width="2.5"/>' +
+    '<circle cx="20" cy="15.5" r="10" fill="#fff"/>' +
+    '<text x="20" y="20.5" font-size="13" text-anchor="middle">' + glyph + '</text>' +
+    (tag ? '<rect x="' + (20 - tw / 2) + '" y="28" width="' + tw + '" height="11" rx="3" fill="' + (BRAND_TAG[brand] || '#222') + '" stroke="#fff" stroke-width="1"/>' +
+      '<text x="20" y="36.5" font-size="8.5" font-weight="700" font-family="Arial,sans-serif" fill="#fff" text-anchor="middle">' + esc(tag) + '</text>' : '') + '</svg>';
+  return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new google.maps.Size(w, h), anchor: new google.maps.Point(w / 2, h - 1) };
+}
+function jobPin(j, fill, tag) {
+  return pinIcon(j.rpos ? '#ff2d55' : fill, deviceBrand(j), KIND[deviceKind(j)], j.rpos ? 'RPOS' : tag, !!j.rpos);
+}
+// Legend in the corner of a map
+function mapLegend(m, byTech) {
+  const box = document.createElement('div');
+  box.className = 'map-legend';
+  const open = store.get('rw_legend', true);
+  const sw = (c, l) => '<span><i style="background:' + c + '"></i>' + l + '</span>';
+  box.innerHTML = '<b onclick="const o=!this.parentElement.classList.toggle(\'shut\');store.set(\'rw_legend\',o)">Legend ▾</b><div>' +
+    (byTech ? '<span>Colour = tech</span>' : sw(STATUS_FILL.today, 'Today') + sw(STATUS_FILL.soon, 'Upcoming') + sw(STATUS_FILL.over, 'Past date') + sw(STATUS_FILL.none, 'Not scheduled')) +
+    sw('#ff2d55', 'RPOS') + '</div><div>' +
+    Object.keys(KIND).map(k => '<span>' + KIND[k] + ' ' + k.replace('pos', 'POS') + '</span>').join('') + '</div><div>' +
+    '<span><i class="tag" style="background:' + BRAND_TAG.HP + '"></i>HP</span><span><i class="tag" style="background:' + BRAND_TAG.Lenovo + '"></i>Lenovo</span>' +
+    '<span><i class="tag" style="background:' + BRAND_TAG.other + '"></i>Other</span></div>';
+  if (!open) box.classList.add('shut');
+  m.controls[google.maps.ControlPosition.LEFT_BOTTOM].clear();
+  m.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(box);
+}
 function renderMap() {
   if (!map) return;
   markers.forEach(m => m.setMap(null)); markers = [];
   const techs = [...new Set(jobs.map(j => j.tech))].sort();
   const t = todayISO();
   const bounds = new google.maps.LatLngBounds();
+  const byTech = session.user.admin && techFilter === 'ALL';
+  mapLegend(map, byTech);
   jobs.filter(j => j.lat).forEach(j => {
-    const color = session.user.admin && techFilter === 'ALL' ? TECH_HUES[techs.indexOf(j.tech) % TECH_HUES.length]
-      : !j.appt ? '#8a8aa0' : j.appt.date < t ? '#e06a6a' : j.appt.date === t ? '#4fb37f' : '#6aa4e0';
-    const m = new google.maps.Marker({ position: { lat: j.lat, lng: j.lng }, map, title: (j.company || j.cni) + ' · ' + j.cni,
-      label: session.user.admin && techFilter === 'ALL' ? { text: j.tech, color: '#111', fontSize: '10px', fontWeight: '700' } : null,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: session.user.admin && techFilter === 'ALL' ? 13 : 10, fillColor: color, fillOpacity: .95, strokeColor: '#111', strokeWeight: 1.5 } });
+    const color = byTech ? TECH_HUES[techs.indexOf(j.tech) % TECH_HUES.length] : STATUS_FILL[statusKey(j)];
+    const brand = deviceBrand(j);
+    const m = new google.maps.Marker({ position: { lat: j.lat, lng: j.lng }, map, zIndex: j.rpos ? 500 : statusKey(j) === 'today' ? 300 : 100,
+      title: (j.company || j.cni) + ' · ' + j.cni + (j.device ? ' · ' + j.device : ''),
+      icon: jobPin(j, color, byTech ? j.tech : brand === 'other' ? '' : brand === 'Lenovo' ? 'LNV' : 'HP') });
     m.addListener('click', () => openJob(j.cni));
     markers.push(m); bounds.extend(m.getPosition());
   });
@@ -1448,9 +1525,10 @@ let adminTab = store.get('rw_admin_tab', 'dash'), searchQ = '', searchT = null, 
 function renderAdmin() {
   const el = $('#view-admin');
   if (!el || view !== 'admin') return;
-  el.innerHTML = '<div class="seg" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
+  el.innerHTML = '<div class="seg" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
     '<button class="' + (adminTab === k ? 'on' : '') + '" onclick="adminTab=\'' + k + '\';store.set(\'rw_admin_tab\',adminTab);renderAdmin()">' + l + '</button>').join('') + '</div><div id="admin-body"></div>';
-  if (adminTab === 'dash') renderDash(); else if (adminTab === 'search') renderSearch(); else if (adminTab === 'pay') renderPay(); else renderScores();
+  const r = { dash: renderDash, board: renderBoard, inbox: renderInbox, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores }[adminTab] || renderDash;
+  r();
 }
 const jobRow = (r, extra) => '<div class="card job" onclick="openJob(\'' + r.cni + '\')"><div class="row between"><span class="co">' + esc(r.company || 'CNI ' + r.cni) + '</span><b>' + esc(r.tech) + '</b></div>' +
   '<div class="small">CNI ' + esc(r.cni) + (r.city ? ' · ' + esc(r.city) : '') + (extra ? ' · ' + extra : '') + '</div></div>';
@@ -1517,6 +1595,190 @@ async function renderScores() {
       '"Days to schedule" only covers jobs scheduled with the app\'s 📅 button.</div>'
       : '<div class="empty">No closures in this window</div>';
   } catch (e) { $('#scores').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+
+// ── Dispatcher tools: daily board, new-ticket inbox, parts watch, HEM feed ─
+const ago = iso => { const m = Math.round((Date.now() - Date.parse(iso)) / 60e3); return isNaN(m) ? '' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago'; };
+const techName = code => (session.techs.find(t => t.tech === code) || {}).name || code;
+const techOpts = sel => session.techs.map(t => '<option value="' + esc(t.tech) + '"' + (t.tech === sel ? ' selected' : '') + '>' + esc(t.name) + (t.area ? ' · ' + esc(t.area) : '') + '</option>').join('');
+const fcLink = cni => '<a class="act" style="padding:8px 10px" target="_blank" rel="noopener" href="https://hemmersbach.fieldcode.com/filter?cni=' + encodeURIComponent(cni) + '">⧉ Fieldcode</a>';
+
+// Daily board: each tech's stops for one day, in route order, on one map
+const BOARD_HEAVY = 5;                       // this many stops in a day or more → flagged heavy
+let boardDay = todayISO(), boardMap = null, boardShapes = [];
+function waitForMaps(ms) {
+  return new Promise(res => { const t0 = Date.now(); (function poll() { if (window.google && google.maps) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(poll, 200); })(); });
+}
+async function renderBoard() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="row between" style="margin:0 4px 8px;gap:8px"><button class="act" style="padding:8px 14px" onclick="boardDay=addDays(boardDay,-1);renderBoard()">←</button>' +
+    '<b style="flex:1;text-align:center">' + (boardDay === todayISO() ? 'Today · ' : '') + esc(nice(boardDay)) + '</b>' +
+    '<button class="act" style="padding:8px 14px" onclick="boardDay=addDays(boardDay,1);renderBoard()">→</button></div>' +
+    '<div id="board-map" style="height:280px;border-radius:12px;margin:0 4px 10px;background:var(--panel2)"></div><div id="board"><div class="empty"><span class="spin"></span></div></div>';
+  let all;
+  try { all = techFilter === 'ALL' ? jobs : (await api('jobs', { tech: 'ALL' })).jobs; }
+  catch (e) { $('#board').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  const techs = session.techs.filter(t => t.tech !== 'OWN' || all.some(j => j.tech === 'OWN'));
+  const cols = techs.map((t, i) => {
+    const mine = all.filter(j => j.tech === t.tech);
+    const day = mine.filter(j => j.appt && j.appt.date === boardDay);
+    const geo = day.filter(j => j.lat), rest = day.filter(j => !j.lat);
+    const order = (geo.length > 1 ? orderStops(null, geo) : geo).concat(rest);
+    const mi = order.filter(j => j.lat).reduce((s, j, k, a) => s + (k ? miles(a[k - 1], j) : 0), 0);
+    return { t, color: TECH_HUES[i % TECH_HUES.length], order, mi, open: mine.length, unsched: mine.filter(j => !j.appt).length };
+  });
+  const load = c => !c.order.length ? '<span class="chip">Idle</span>' : c.order.length >= BOARD_HEAVY ? '<span class="chip red">Heavy · ' + c.order.length + ' stops</span>'
+    : '<span class="chip green">' + c.order.length + ' stop' + (c.order.length === 1 ? '' : 's') + '</span>';
+  const total = cols.reduce((s, c) => s + c.order.length, 0);
+  $('#board').innerHTML = '<div class="small" style="margin:0 4px 8px">' + total + ' visit' + (total === 1 ? '' : 's') + ' booked · ' +
+      cols.filter(c => !c.order.length).length + ' tech' + (cols.filter(c => !c.order.length).length === 1 ? '' : 's') + ' idle</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin:0 4px">' + cols.map(c =>
+      '<div class="card" style="margin:0;border-top:4px solid ' + c.color + (c.order.length >= BOARD_HEAVY ? ';border-color:var(--red)' : '') + '">' +
+        '<div class="row between"><span class="co">' + esc(c.t.name) + '</span>' + load(c) + '</div>' +
+        '<div class="small" style="margin:2px 0 6px">' + esc(c.t.area || '') + (c.t.area ? ' · ' : '') + c.open + ' open' +
+          (c.unsched ? ' · <a href="#" onclick="event.preventDefault();pickTech(\'' + esc(c.t.tech) + '\');$(\'#tech-pick\').value=\'' + esc(c.t.tech) + '\';show(\'today\')">' + c.unsched + ' not scheduled</a>' : '') +
+          (c.mi ? ' · ≈ ' + Math.round(c.mi) + ' mi' : '') + '</div>' +
+        (c.order.length ? c.order.map((j, k) => '<div class="small" style="padding:5px 0;border-top:1px solid var(--line);cursor:pointer" onclick="openJob(\'' + j.cni + '\')">' +
+          '<b>' + (k + 1) + '.</b> ' + (j.appt.time ? '<b>' + esc(j.appt.time) + '</b> · ' : '') + esc(j.company || j.customer || 'CNI ' + j.cni) +
+          '<div style="color:var(--sub)">' + esc(j.city || j.address || '') + (j.lat ? '' : ' · no map location') + (j.rpos ? ' · 🚨 RPOS' : '') + '</div></div>').join('')
+          : '<div class="small" style="color:var(--sub);padding:4px 0">Nothing booked' + (c.unsched ? ' — ' + c.unsched + ' job' + (c.unsched === 1 ? '' : 's') + ' could go here' : '') + '</div>') +
+      '</div>').join('') + '</div>';
+  ensureMap();
+  if (!(await waitForMaps(10000)) || !$('#board-map')) { if ($('#board-map')) $('#board-map').style.display = 'none'; return; }
+  boardMap = new google.maps.Map($('#board-map'), { center: { lat: 39.5, lng: -98.35 }, zoom: 4, streetViewControl: false, mapTypeControl: false,
+    fullscreenControl: false, clickableIcons: false, styles: document.documentElement.dataset.theme === 'light' ? [] : DARK });
+  mapLegend(boardMap, true);
+  const bounds = new google.maps.LatLngBounds(); let n = 0;
+  cols.forEach(c => {
+    const pts = c.order.filter(j => j.lat);
+    if (pts.length > 1) new google.maps.Polyline({ map: boardMap, path: pts.map(j => ({ lat: j.lat, lng: j.lng })), strokeColor: c.color, strokeOpacity: .9, strokeWeight: 3 });
+    pts.forEach((j, k) => {
+      const m = new google.maps.Marker({ map: boardMap, position: { lat: j.lat, lng: j.lng }, title: c.t.name + ' · ' + (k + 1) + '. ' + (j.company || j.cni) + (j.device ? ' · ' + j.device : ''),
+        icon: jobPin(j, c.color, c.t.tech + ' ' + (k + 1)) });
+      m.addListener('click', () => openJob(j.cni));
+      bounds.extend(m.getPosition()); n++;
+    });
+  });
+  if (n) { boardMap.fitBounds(bounds, 40); if (n === 1) boardMap.setZoom(12); }
+}
+
+// New-ticket inbox: open Fieldcode tickets with no tech, or a tech but no map pin
+let inboxTeams = true;
+async function renderInbox() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  let d;
+  try { d = await api('inbox', { mark: true }); } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  const none = d.items.filter(i => !i.tech), nopin = d.items.filter(i => i.tech);
+  const nNew = d.items.filter(i => i.isNew).length;
+  const card = i => {
+    const lsdt = Date.parse(i.lsdt);
+    return '<div class="card" id="ib-' + i.cni + '"' + (i.rpos ? ' style="border-left:4px solid var(--red)"' : '') + '>' +
+      '<div class="row between"><span class="co">' + esc(i.company || 'CNI ' + i.cni) + '</span><span>' + (i.isNew ? '<span class="chip blue">🆕 New</span> ' : '') +
+        (i.rpos ? '<span class="chip red">🚨 RPOS</span> ' : '') + '<span class="chip">' + esc(i.status) + '</span></span></div>' +
+      '<div class="small" style="margin-top:2px">CNI ' + esc(i.cni) + (i.wo ? ' · ' + esc(i.wo) : '') + (i.city ? ' · ' + esc(i.city) : '') + (i.device ? ' · ' + esc(i.device) : '') + '</div>' +
+      '<div class="small">' + (isNaN(lsdt) ? '' : '<span style="color:var(--' + (lsdt - Date.now() < 24 * 3600e3 ? 'red' : 'amber') + ')">SLA ' +
+        new Date(lsdt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '</span> · ') +
+        'in Fieldcode ' + esc(i.created ? shortDate(i.created) || i.created : '') + (i.drafted ? ' · drafted ' + esc(shortDate(i.drafted)) : ' · not drafted') +
+        (i.tech ? ' · <b>' + esc(techName(i.tech)) + '</b>, not on the map' : '') + '</div>' +
+      '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><select class="in" id="as-' + i.cni + '" style="flex:1;min-width:150px;padding:8px">' +
+        (i.tech ? '' : '<option value="">' + (i.suggest ? '' : 'Pick a tech…') + '</option>') + techOpts(i.tech || i.suggest) + '</select>' +
+        '<button class="act primary" style="padding:8px 14px" onclick="doAssign(\'' + i.cni + '\',this)">' + (i.tech ? '↪ Reassign' : '✓ Assign') + '</button>' + fcLink(i.cni) + '</div>' +
+      (i.suggest && !i.tech ? '<div class="small" style="margin-top:4px;color:var(--sub)">Suggested: ' + esc(techName(i.suggest)) + ' usually takes ' + esc(i.city) + '</div>' : '') +
+    '</div>';
+  };
+  box.innerHTML = '<div class="small" style="margin:0 4px 6px">' + d.items.length + ' ticket' + (d.items.length === 1 ? '' : 's') + (nNew ? ' · <b>' + nNew + ' new</b>' : '') +
+      (d.lastSeen ? ' since you last looked (' + ago(d.lastSeen) + ')' : '') + (d.exportAt ? ' · Fieldcode list from ' + ago(d.exportAt) : '') + '</div>' +
+    '<label class="row small" style="margin:0 4px 8px;gap:8px"><input type="checkbox" ' + (inboxTeams ? 'checked' : '') + ' onchange="inboxTeams=this.checked"> Post the assignment in the tech\'s Teams chat</label>' +
+    (none.length ? '<div class="group">No tech yet · ' + none.length + '</div>' + none.map(card).join('') : '') +
+    (nopin.length ? '<div class="group">Has a tech, not on the map · ' + nopin.length + '</div>' + nopin.map(card).join('') : '') +
+    (d.items.length ? '' : '<div class="empty">Every open ticket has a tech and a pin 🎉</div>') +
+    '<div class="small" style="margin:8px 4px">Assign puts the ticket in the tech\'s app list right away and notifies them. The map pin is added on the next sweep once the ticket has a street address. ' +
+    'Until then, create the Gmail draft in Fieldcode as usual: that sends the dispatch email and pins it.</div>';
+}
+async function doAssign(cni, btn) {
+  const tech = $('#as-' + cni).value;
+  if (!tech) return toast('Pick a tech');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  try {
+    const r = await api('assign', { cni, tech, teams: inboxTeams, email: true });
+    toast('CNI ' + cni + ' → ' + r.name + (r.mailed ? ' · dispatch email sent' : ''), 3500);
+    const c = $('#ib-' + cni);
+    if (c) { c.style.opacity = '.55'; c.querySelector('.row[style*="margin-top:8px"]').innerHTML = '<span class="chip green">✓ Assigned to ' + esc(r.name) + '</span>' + fcLink(cni); }
+    refresh();
+  } catch (e) { toast(e.message, 5000); btn.disabled = false; btn.textContent = '✓ Assign'; }
+}
+
+// Parts watch: parts at FedEx close to their last pickup day
+async function renderWatch() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  let d;
+  try { d = await api('partswatch'); } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  const row = p => '<div class="card" id="pw-' + p.tracking + '"><div class="row between"><span class="co">' + esc(p.where || 'FedEx') + '</span><b>' + esc(techName(p.tech)) + '</b></div>' +
+    '<div style="margin-top:4px"><span class="trk" style="font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--sub)">' + esc(p.tracking.slice(0, -4)) +
+      '<span class="last4" style="font-size:16px">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + '</span></div>' +
+    '<div class="small">CNI ' + esc(p.cni) + (p.company ? ' · ' + esc(p.company) : '') + (p.pickup ? ' · ' + esc(p.pickup) : '') + '</div>' +
+    '<div style="margin-top:6px">' + (p.daysLeft != null ? returnChip(p) : '<span class="chip amber">Ready for pickup</span>') + '</div>' +
+    '<div class="small" style="margin-top:4px;color:var(--sub)" id="pwn-' + p.tracking + '">' + (p.lastNudge ? 'Nudged ' + esc(ago(p.lastNudge.time)) + ' by ' + esc(p.lastNudge.by) : 'Not nudged yet') + '</div>' +
+    '<div class="row" style="gap:6px;margin-top:8px"><button class="act primary" style="flex:1;padding:9px" onclick="nudge(\'' + p.tracking + '\',this)">🔔 Nudge ' + esc(techName(p.tech).split(' ')[0]) + '</button>' +
+      '<button class="act" style="flex:1;padding:9px" onclick="openJob(\'' + p.cni + '\')">📄 Ticket</button></div></div>';
+  box.innerHTML = '<div class="small" style="margin:0 4px 6px">Parts waiting at FedEx with ' + d.watchDays + ' day' + (d.watchDays === 1 ? '' : 's') + ' or less left, not marked picked up</div>' +
+    (d.due.length ? d.due.map(row).join('') : '<div class="empty">Nothing close to its last pickup day 👍</div>') +
+    (d.later.length ? '<div class="group">More time left · ' + d.later.length + '</div>' + d.later.map(row).join('') : '') +
+    (d.transit ? '<div class="small" style="margin:8px 4px">' + d.transit + ' more on the way to FedEx</div>' : '');
+}
+async function nudge(tracking, btn) {
+  const text = prompt('Nudge the tech to pick this part up. Add a note (optional):', '');
+  if (text === null) return;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  try {
+    const r = await api('nudge', { tracking, text });
+    toast('Nudged ' + techName(r.tech) + (r.teams ? ' · app + Teams' : ' · app'), 3500);
+    btn.textContent = '✓ Nudged';
+    const n = $('#pwn-' + tracking); if (n) n.textContent = 'Nudged just now by ' + session.user.name;
+  } catch (e) { toast(e.message, 5000); btn.disabled = false; btn.textContent = '🔔 Nudge'; }
+}
+
+// HEM feed: what Hemmersbach said, per ticket (Teams + email)
+let hemDays = 3, hemQ = '', hemData = null, hemOpen = {};
+async function renderHem(fresh) {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="row" style="margin:0 4px 8px;gap:6px;flex-wrap:wrap"><div class="seg">' + [1, 3, 7].map(n =>
+      '<button class="' + (hemDays === n ? 'on' : '') + '" onclick="hemDays=' + n + ';hemData=null;renderHem()">' + (n === 1 ? '24 h' : n + ' days') + '</button>').join('') +
+      '<button onclick="renderHem(true)">↻</button></div></div>' +
+    '<input class="search" placeholder="Filter: CNI, company, tech, words…" value="' + esc(hemQ) + '" oninput="hemQ=this.value;hemList()"><div id="hem-list"><div class="empty"><span class="spin"></span></div></div>';
+  if (!hemData || fresh) {
+    try { hemData = await api('hem', { days: hemDays, fresh: !!fresh }); }
+    catch (e) { $('#hem-list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  }
+  hemList();
+}
+function hemMsg(m, key) {
+  const long = m.text.length > 220, open = hemOpen[key];
+  return '<div style="border-top:1px solid var(--line);padding:6px 0">' +
+    '<div class="small"><b>' + (m.src === 'email' ? '✉' : '💬') + ' ' + esc(m.from) + '</b> · ' + esc(ago(m.time)) +
+      (m.waiting ? ' <span class="chip amber">waiting on us</span>' : '') + (m.link ? ' · <a href="' + esc(m.link) + '" target="_blank" rel="noopener">Gmail</a>' : '') + '</div>' +
+    (m.subject ? '<div class="small" style="color:var(--sub)">' + esc(m.subject) + '</div>' : '') +
+    '<div class="small" style="white-space:pre-wrap;margin-top:2px' + (long && !open ? ';max-height:4.2em;overflow:hidden' : '') + '">' + esc(m.text) + '</div>' +
+    (long ? '<a href="#" class="small" onclick="event.preventDefault();hemOpen[\'' + key + '\']=!hemOpen[\'' + key + '\'];hemList()">' + (open ? 'Less' : 'More') + '</a>' : '') + '</div>';
+}
+function hemList() {
+  const el = $('#hem-list'); if (!el || !hemData) return;
+  const q = hemQ.trim().toLowerCase();
+  const hit = t => !q || JSON.stringify(t).toLowerCase().includes(q);
+  const ts = hemData.tickets.filter(hit), loose = hemData.loose.filter(hit);
+  el.innerHTML = '<div class="small" style="margin:0 4px 6px">' + ts.length + ' ticket' + (ts.length === 1 ? '' : 's') + ' · ' +
+      ts.filter(t => t.waiting).length + ' waiting on us · ' + ts.filter(t => t.cancel).length + ' cancel' + ' · updated ' + esc(ago(hemData.at)) + '</div>' +
+    ts.map(t => '<div class="card"' + (t.cancel ? ' style="border-left:4px solid var(--red)"' : t.waiting ? ' style="border-left:4px solid var(--amber)"' : '') + '>' +
+      '<div class="row between"' + (t.open ? ' style="cursor:pointer" onclick="openJob(\'' + t.cni + '\')"' : '') + '><span class="co">' + esc(t.company || 'CNI ' + t.cni) + '</span><b>' + esc(t.tech || '–') + '</b></div>' +
+      '<div class="small">CNI ' + esc(t.cni) + (t.city ? ' · ' + esc(t.city) : '') + (t.status ? ' · ' + esc(t.status) : '') + (t.open ? '' : ' · not open in the app') + ' ' +
+        (t.cancel ? '<span class="chip red">⚠ cancel / removed</span> ' : '') + (t.scheduled ? '<span class="chip green">📅 scheduled</span> ' : '') +
+        (t.waiting ? '<span class="chip amber">✉ waiting on us</span>' : '') + '</div>' +
+      t.msgs.map((m, k) => hemMsg(m, t.cni + '-' + k)).join('') + '</div>').join('') +
+    (loose.length ? '<div class="group">Emails not matched to a ticket · ' + loose.length + '</div>' + loose.map((m, k) =>
+      '<div class="card">' + (m.refs && m.refs.length ? '<div class="small" style="color:var(--sub)">Mentions ' + esc(m.refs.join(', ')) + '</div>' : '') + hemMsg(m, 'l' + k) + '</div>').join('') : '') +
+    (!ts.length && !loose.length ? '<div class="empty">Nothing from HEM in this window</div>' : '');
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
