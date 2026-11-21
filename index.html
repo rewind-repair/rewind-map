@@ -217,7 +217,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.47';
+const APP_VERSION = '3.49';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -833,6 +833,7 @@ function visitMenu(cni) {
   menu('Visit · fills date, check-in and check-out on the closure form', [
     { label: '📍 Arrived', sub: v.in ? 'in ' + clock(v.in) : 'check in now', on: v.in && !v.out, fn: () => visit(cni, 'in') },
     { label: '✅ Done', sub: v.out ? 'out ' + clock(v.out) : v.in ? 'check out now' : 'check in first', on: !!v.out, disabled: !v.in, fn: () => visit(cni, 'out') },
+    { label: '🧾 Receipt', sub: 'parking, tolls, FedEx drop-off', wide: true, fn: () => openReceipt({ cni }) },
   ]);
 }
 function contactMenu(cni) {
@@ -1004,8 +1005,7 @@ async function openClosure(cni) {
     if (f.kind === 'choice') {
       input = '<div class="seg" data-key="' + f.key + '">' + f.choices.map(c => '<button type="button" class="' + (val === c ? 'on' : '') + '" onclick="segPick(this)">' + esc(c) + '</button>').join('') + '</div>' +
               '<input type="hidden" id="' + id + '" value="' + esc(val) + '">';
-    } else if (f.kind === 'long') input = '<textarea class="in" id="' + id + '">' + esc(val) + '</textarea>' +
-        (/diagnos|work done/i.test(f.label) ? scanBtn(id, 'Scan serial', 'Serial: ') : '');
+    } else if (f.kind === 'long') input = '<textarea class="in" id="' + id + '">' + esc(val) + '</textarea>';
     else {
       const type = f.kind === 'date' ? 'date' : f.kind === 'time' ? 'time' : f.kind === 'datetime' ? 'datetime-local' : f.kind === 'number' ? 'number' : 'text';
       input = '<input class="in" type="' + type + '" id="' + id + '" value="' + esc(val) + '">' + (/track/i.test(f.label) ? scanBtn(id, 'Scan tracking') : '');
@@ -1191,6 +1191,7 @@ function partMenu(tracking, cni) {
     { label: '📄 Open ticket', sub: 'CNI ' + esc(cni), fn: () => openJob(cni) },
     { label: '🔎 FedEx tracking', href: 'https://www.fedex.com/fedextrack/?trknbr=' + encodeURIComponent(tracking) },
     { label: '📋 Copy number', fn: () => { try { navigator.clipboard.writeText(tracking); toast('Copied ' + tracking); } catch (e) { toast(tracking, 5000); } } },
+    { label: '🧾 Return drop-off receipt', sub: 'defective part sent back', wide: true, fn: () => openReceipt({ cni, type: 'fedex' }) },
   ]);
 }
 function partChip(f) {
@@ -1507,7 +1508,10 @@ async function scanInto(inputId, append) {
   }
 }
 function stopScan() { if (scanStop) { try { scanStop(); } catch (e) {} scanStop = null; } const o = $('#scanner'); if (o) o.remove(); }
-const scanBtn = (id, label, append) => '<button type="button" class="act" style="margin-top:6px" onclick="scanInto(\'' + id + '\'' + (append ? ',\'' + append + '\'' : '') + ')">📷 ' + label + '</button>';
+// iPhone: the camera scanner doesn't work in iOS web apps, so point to iOS's own Live Text
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const scanBtn = (id, label, append) => IOS ? '<div class="small" style="margin-top:6px;color:var(--sub)">📷 On iPhone: tap the box, then <b>Scan Text</b> (or the camera key on the keyboard) and point it at the tracking number on the label.</div>' : scanBtn0(id, label, append);
+const scanBtn0 = (id, label, append) => '<button type="button" class="act" style="margin-top:6px" onclick="scanInto(\'' + id + '\'' + (append ? ',\'' + append + '\'' : '') + ')">📷 ' + label + '</button>';
 
 // ── Route for the day ─────────────────────────────────────────────────────
 const toRad = x => x * Math.PI / 180;
@@ -1579,8 +1583,16 @@ async function openRoute() {
 
 // ── Pay this period (tech) ────────────────────────────────────────────────
 let payOffset = 0;
+let meTab = store.get('rw_me_tab', 'pay');
 async function renderPay() {
-  const el = view === 'admin' ? $('#admin-body') : $('#view-pay');
+  if (view === 'pay') {
+    const v = $('#view-pay');
+    v.innerHTML = '<div class="seg" style="margin:8px 4px 6px">' + [['pay', '$ Pay'], ['miles', '🚗 Miles'], ['receipts', '🧾 Receipts']].map(([k, l]) =>
+      '<button class="' + (meTab === k ? 'on' : '') + '" onclick="meTab=\'' + k + '\';store.set(\'rw_me_tab\',meTab);renderPay()">' + l + '</button>').join('') + '</div><div id="me-body"></div>';
+    if (meTab === 'miles') return renderMiles($('#me-body'));
+    if (meTab === 'receipts') return renderReceipts($('#me-body'));
+  }
+  const el = view === 'admin' ? $('#admin-body') : $('#me-body');
   if (!el || (view !== 'pay' && !(view === 'admin' && adminTab === 'pay'))) return;
   if (session.user.admin && techFilter === 'ALL') { el.innerHTML = '<div class="empty">Pick a tech at the top to see their pay estimate</div>'; return; }
   el.innerHTML = '<div class="empty"><span class="spin"></span> Adding up your closures…</div>';
@@ -1603,7 +1615,7 @@ let adminTab = store.get('rw_admin_tab', 'dash'), searchQ = '', searchT = null, 
 function adminTabsHtml() {
   const n = fcData ? fcData.tickets.filter(t => t.toDispatch).length : 0;
   const rn = rqData ? rqData.items.length : 0;
-  return '<div class="seg" id="admin-tabs" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['replies', 'Replies' + (rn ? ' · ' + rn : '')], ['fc', 'Dispatch' + (n ? ' · ' + n : '')], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay']].map(([k, l]) =>
+  return '<div class="seg" id="admin-tabs" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['replies', 'Replies' + (rn ? ' · ' + rn : '')], ['fc', 'Dispatch' + (n ? ' · ' + n : '')], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay'], ['exp', 'Expenses']].map(([k, l]) =>
     '<button class="' + (adminTab === k ? 'on' : '') + '" onclick="adminTab=\'' + k + '\';store.set(\'rw_admin_tab\',adminTab);renderAdmin()">' + l + '</button>').join('') + '</div>';
 }
 function renderAdmin() {
@@ -1614,7 +1626,7 @@ function renderAdmin() {
   if (adminTab !== 'fc' && (!fcData || Date.now() - (fcData.loaded || 0) > 120e3)) api('fclist').then(d => {
     d.loaded = Date.now(); fcData = d; const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); }).catch(() => {});
   if (adminTab !== 'replies' && (!rqData || Date.now() - (rqData.loaded || 0) > 120e3)) loadRq().then(() => { const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); }).catch(() => {});
-  const r = { replies: renderRq, dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores }[adminTab] || renderDash;
+  const r = { replies: renderRq, dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores, exp: renderExpenses }[adminTab] || renderDash;
   r();
 }
 const jobRow = (r, extra) => '<div class="card job" onclick="openJob(\'' + r.cni + '\')"><div class="row between"><span class="co">' + esc(r.company || 'CNI ' + r.cni) + '</span><b>' + esc(r.tech) + '</b></div>' +
@@ -2168,6 +2180,146 @@ async function rqHandled(cni, kind) {
   if (note === null) return;
   try { await api('handled', { cni, kind, note }); rqDrop(cni, kind); toast('Marked handled'); const j = jobs.find(x => x.cni === cni); if (j) { if (kind === 'hem') j.hemAsk = null; else j.custWaiting = null; } }
   catch (e) { toast(e.message, 5000); }
+}
+
+// ── Mileage: automatic, point to point ────────────────────────────────────
+// Google Maps driving distance between the day's stops (📍 Arrived check-ins, closure-form visits,
+// FedEx pickups), from and back to the tech's start address. Plus manual entries for anything else.
+try { localStorage.removeItem('rw_miles'); } catch (e) {}          // the old GPS tracker's state
+let miOffset = 0, miSet = null;
+async function renderMiles(el) {
+  el.innerHTML = '<div class="card" id="mi-today"><div class="empty"><span class="spin"></span> Working out today\'s route…</div></div>' +
+    '<div class="card" id="mi-set"></div>' +
+    '<details class="card"><summary><b>＋ Add miles by hand</b> <span class="small">(trips not in the app)</span></summary>' +
+      '<div class="row" style="gap:8px;margin-top:8px"><label class="f" style="flex:1"><span>Date</span><input class="in" type="date" id="mi-date" value="' + todayISO() + '"></label>' +
+      '<label class="f" style="flex:1"><span>Miles</span><input class="in" type="number" inputmode="decimal" id="mi-miles" placeholder="or odometer"></label></div>' +
+      '<div class="row" style="gap:8px"><label class="f" style="flex:1"><span>Odometer start</span><input class="in" type="number" inputmode="numeric" id="mi-a"></label>' +
+      '<label class="f" style="flex:1"><span>Odometer end</span><input class="in" type="number" inputmode="numeric" id="mi-b"></label></div>' +
+      '<label class="f"><span>Note</span><input class="in" id="mi-note" placeholder="e.g. parts run to the FedEx hub"></label>' +
+      '<button class="act primary" style="width:100%" id="mi-add" onclick="miAdd()">＋ Add</button></details>' +
+    '<div id="mi-list"><div class="empty"><span class="spin"></span></div></div>';
+  api('milesettings', { tech: techFilter }).then(d => { miSet = d; miSetUi(); }).catch(() => {});
+  miToday(false);
+  try {
+    const d = await api('mileagelist', { offset: miOffset, tech: techFilter });
+    $('#mi-list').innerHTML = '<div class="row between" style="margin:8px 4px"><button class="act" onclick="miOffset++;renderPay()">‹ Earlier</button><b>' + esc(d.period.label) + ' · ' + d.total + ' mi</b>' +
+        '<button class="act" onclick="miOffset=Math.max(0,miOffset-1);renderPay()"' + (miOffset ? '' : ' disabled') + '>Later ›</button></div>' +
+      (d.entries.length ? d.entries.map(r => '<div class="card"><div class="row between"><span>' + esc(nice(r.date)) + '</span><b>' + r.miles + ' mi</b></div>' +
+        '<div class="small">' + (r.source === 'auto' ? '🗺 ' + esc(r.note || 'route') : r.source === 'gps' ? '📡 GPS (old tracker)' : '✍ by hand' + (r.odoStart ? ' · odometer ' + esc(r.odoStart) + '–' + esc(r.odoEnd) : '') + (r.note ? ' · ' + esc(r.note) : '')) +
+        (r.source === 'manual' && r.tech === session.user.tech ? ' · <a href="#" onclick="event.preventDefault();miDel(\'' + esc(r.key) + '\')">remove</a>' : '') + '</div></div>').join('')
+        : '<div class="empty">No miles in this period yet</div>');
+  } catch (e) { $('#mi-list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+function miRouteHtml(r) {
+  const st = (r.route && r.route.stops) || [];
+  if (st.length < 2) return '<div class="small" style="margin-top:6px;color:var(--sub)">No stops yet today. Miles fill in as you check in (📍 Arrived), close tickets and pick up parts.</div>';
+  return '<div style="margin-top:8px">' + st.map((p, i) => '<div class="small" style="padding:3px 0' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
+    (i ? '<span style="color:var(--sub)">↓ ' + (r.route.legs[i - 1] != null ? r.route.legs[i - 1] + ' mi' : '') + '</span><br>' : '') +
+    '<b>' + esc(p.label || '') + '</b>' + (p.cni ? ' <span style="color:var(--sub)">CNI ' + esc(p.cni) + '</span>' : '') + (p.time && p.kind !== 'home' ? ' <span style="color:var(--sub)">· ' + esc(clock(p.time)) + '</span>' : '') + '</div>').join('') + '</div>';
+}
+async function miToday(force) {
+  const el = $('#mi-today'); if (!el) return;
+  if (force) el.innerHTML = '<div class="empty"><span class="spin"></span> Recalculating…</div>';
+  try {
+    const r = await api('mileauto', { date: todayISO(), tech: techFilter, force: !!force });
+    el.innerHTML = '<div class="row between"><span class="co">🗺 Today</span><b style="font-size:24px">' + (r.miles || 0) + ' mi</b></div>' +
+      '<div class="small">Driving distance between your stops (Google Maps)</div>' + miRouteHtml(r) +
+      '<button class="act" style="width:100%;margin-top:8px" onclick="miToday(true)">↻ Recalculate</button>';
+  } catch (e) { el.innerHTML = '<div class="small" style="color:var(--amber)">' + esc(e.message) + '</div><button class="act" style="width:100%;margin-top:8px" onclick="miToday(true)">↻ Try again</button>'; }
+}
+function miSetUi() {
+  const el = $('#mi-set'); if (!el || !miSet) return;
+  el.innerHTML = '<b>Start point</b><div class="small" style="color:var(--sub)">Where your day starts (home or shop). Not shared with customers.</div>' +
+    '<input class="in" id="mi-start" style="margin-top:6px" placeholder="e.g. 1234 W Main St, Mesa, AZ 85201" value="' + esc(miSet.start || '') + '">' +
+    '<label class="row small" style="gap:8px;margin-top:8px"><input type="checkbox" id="mi-rt"' + (miSet.roundTrip !== false ? ' checked' : '') + '> Count the drive back at the end of the day</label>' +
+    '<button class="act" style="width:100%;margin-top:8px" onclick="miSaveSet()">Save start point</button>' +
+    (miSet.start ? '' : '<div class="small" style="margin-top:6px;color:var(--amber)">Without a start point, miles count from your first stop to your last.</div>');
+}
+async function miSaveSet() {
+  try { miSet = await api('milesettings', { save: true, tech: techFilter, start: $('#mi-start').value.trim(), roundTrip: $('#mi-rt').checked }); toast('Saved'); miSetUi(); miToday(true); }
+  catch (e) { toast(e.message, 4000); }
+}
+async function miAdd() {
+  const b = $('#mi-add'); b.disabled = true;
+  try {
+    const r = await api('mileage', { source: 'manual', date: $('#mi-date').value, miles: $('#mi-miles').value, odoStart: $('#mi-a').value, odoEnd: $('#mi-b').value, note: $('#mi-note').value.trim() });
+    flash('Miles added', r.miles + ' mi', '🚗'); renderPay();
+  } catch (e) { toast(e.message, 4000); b.disabled = false; }
+}
+async function miDel(key) {
+  if (!(await sure('Remove this mileage entry?', 'Remove'))) return;
+  try { await api('mileage', { del: key, date: todayISO() }); renderPay(); } catch (e) { toast(e.message, 4000); }
+}
+
+// ── Receipts: photo + type + amount (+ ticket, + return tracking for FedEx drop-offs) ────────
+const RCPT = { parking: '🅿️ Parking', tolls: '🛣 Tolls', fedex: '📦 FedEx drop-off', fuel: '⛽ Fuel', supplies: '🧰 Supplies', other: '🧾 Other' };
+const RCPT_ST = { submitted: ['amber', 'Waiting for review'], approved: ['green', 'Approved'], rejected: ['red', 'Not approved'], paid: ['blue', 'Paid'] };
+function openReceipt(o) {
+  o = o || {};
+  let type = o.type || 'parking';
+  const myJobs = jobs.filter(j => session.user.admin ? true : j.tech === session.user.tech);
+  sheet('🧾 Receipt', '<div class="seg" id="rc-type" style="margin-bottom:10px">' + Object.keys(RCPT).map(k => '<button type="button" data-k="' + k + '" class="' + (k === type ? 'on' : '') + '">' + RCPT[k] + '</button>').join('') + '</div>' +
+    '<label class="f"><span>Photo of the receipt <i>*</i></span><input class="in" type="file" id="rc-file" accept="image/*,application/pdf" multiple></label>' +
+    '<div class="row" style="gap:8px"><label class="f" style="flex:1"><span>Amount ($)</span><input class="in" type="number" inputmode="decimal" step="0.01" id="rc-amt" placeholder="0.00"></label>' +
+      '<label class="f" style="flex:1"><span>Date</span><input class="in" type="date" id="rc-date" value="' + todayISO() + '"></label></div>' +
+    '<label class="f"><span>Ticket</span><select class="in" id="rc-cni"><option value="">— not for a ticket —</option>' + myJobs.map(j => '<option value="' + esc(j.cni) + '"' + (j.cni === o.cni ? ' selected' : '') + '>CNI ' + esc(j.cni) + ' · ' + esc(j.company || j.city || '') + '</option>').join('') +
+      (o.cni && !myJobs.some(j => j.cni === o.cni) ? '<option value="' + esc(o.cni) + '" selected>CNI ' + esc(o.cni) + '</option>' : '') + '</select></label>' +
+    '<div id="rc-trk-row" class="' + (type === 'fedex' ? '' : 'hidden') + '"><label class="f"><span>Return tracking number</span><input class="in" id="rc-trk" inputmode="numeric" placeholder="from the FedEx label / receipt"></label>' + scanBtn('rc-trk', 'Scan label') + '</div>' +
+    '<label class="f"><span>Note (optional)</span><input class="in" id="rc-note" placeholder="e.g. hospital garage, 2 h"></label>' +
+    '<button class="act primary" style="width:100%;padding:13px;margin-top:4px" id="rc-go">Submit receipt</button>' +
+    '<div class="small" style="margin-top:8px;color:var(--sub)">Saved to the Rewind receipts folder for reimbursement. FedEx drop-offs also tell dispatch the part is on its way back.</div>');
+  $('#rc-type').querySelectorAll('button').forEach(b => b.onclick = () => { type = b.dataset.k; $('#rc-type').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); $('#rc-trk-row').classList.toggle('hidden', type !== 'fedex'); });
+  $('#rc-go').onclick = async () => {
+    const files = [...$('#rc-file').files];
+    if (!files.length) return toast('Add a photo of the receipt');
+    const b = $('#rc-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Uploading…';
+    try {
+      const data = await Promise.all(files.slice(0, 6).map(f => /pdf/i.test(f.type) ? new Promise((res, rej) => { if (f.size > 8e6) return rej(new Error('PDF too large (8 MB max)')); const r = new FileReader(); r.onload = () => res({ name: f.name, data: r.result }); r.onerror = () => rej(new Error('Could not read ' + f.name)); r.readAsDataURL(f); }) : shrink(f)));
+      await api('receipt', { type, files: data, amount: $('#rc-amt').value, date: $('#rc-date').value, cni: $('#rc-cni').value, tracking: type === 'fedex' ? $('#rc-trk').value : '', note: $('#rc-note').value.trim() });
+      flash('Receipt submitted', RCPT[type] + ($('#rc-amt').value ? ' · $' + $('#rc-amt').value : ''), '🧾');
+      closeSheet(); history.back(); if (view === 'pay') renderPay();
+    } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = 'Submit receipt'; }
+  };
+}
+let rcOffset = 0;
+function receiptCard(r, admin) {
+  const st = RCPT_ST[r.status] || ['', r.status];
+  return '<div class="card"><div class="row between"><span class="co">' + esc(RCPT[r.type] || r.label) + (admin ? ' · ' + esc(r.name) : '') + '</span><b>' + (r.amount !== '' ? '$' + esc(r.amount) : '—') + '</b></div>' +
+    '<div class="small">' + esc(nice(r.date)) + (r.cni ? ' · CNI ' + esc(r.cni) : '') + ' · <span style="color:var(--' + st[0] + ')">' + st[1] + '</span>' + (r.reviewedBy && r.status !== 'submitted' ? ' by ' + esc(r.reviewedBy) : '') + '</div>' +
+    (r.tracking ? '<div class="small">📦 ' + trackHtml(r.tracking) + (r.fedex ? ' · ' + esc(r.fedex.status || '') + (r.fedex.delivered ? ' ✅' : '') : '') + '</div>' : '') +
+    (r.note ? '<div class="small" style="color:var(--sub)">' + esc(r.note) + '</div>' : '') +
+    '<div class="small" style="margin-top:4px">' + r.files.map((f, i) => '<a target="_blank" rel="noopener" href="' + esc(f) + '">📎 Receipt' + (r.files.length > 1 ? ' ' + (i + 1) : '') + '</a>').join(' · ') + '</div>' +
+    (admin ? '<div class="actions" style="margin-top:8px;grid-template-columns:1fr 1fr 1fr">' + [['approved', '✅ Approve'], ['rejected', '✖ Reject'], ['paid', '💵 Paid']].map(([k, l]) =>
+      '<button class="act' + (r.status === k ? ' on' : '') + '" onclick="rcStatus(\'' + r.id + '\',\'' + k + '\',this)">' + l + '</button>').join('') + '</div>' : '') + '</div>';
+}
+async function renderReceipts(el) {
+  el.innerHTML = '<button class="act primary" style="width:100%;padding:12px;margin:0 0 8px" onclick="openReceipt({})">＋ Add receipt</button><div id="rc-list"><div class="empty"><span class="spin"></span></div></div>';
+  try {
+    const d = await api('receipts', { offset: rcOffset, tech: techFilter });
+    $('#rc-list').innerHTML = '<div class="row between" style="margin:8px 4px"><button class="act" onclick="rcOffset++;renderPay()">‹ Earlier</button><b>' + esc(d.period.label) + ' · $' + d.total + '</b>' +
+      '<button class="act" onclick="rcOffset=Math.max(0,rcOffset-1);renderPay()"' + (rcOffset ? '' : ' disabled') + '>Later ›</button></div>' +
+      (d.receipts.length ? d.receipts.map(r => receiptCard(r, false)).join('') : '<div class="empty">No receipts in this period</div>');
+  } catch (e) { $('#rc-list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+// Admin → Expenses: receipts waiting for review + miles per tech this pay period
+let expOffset = 0;
+async function renderExpenses() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div id="exp-rc"><div class="empty"><span class="spin"></span></div></div><div id="exp-mi"></div>';
+  try {
+    const [rc, mi] = await Promise.all([api('receipts', { pending: true, tech: 'ALL' }), api('mileagelist', { offset: expOffset, tech: 'ALL' })]);
+    $('#exp-rc').innerHTML = '<div class="group">🧾 Receipts to review · ' + rc.receipts.length + '</div>' + (rc.receipts.length ? rc.receipts.map(r => receiptCard(r, true)).join('') : '<div class="empty">Nothing waiting</div>');
+    $('#exp-mi').innerHTML = '<div class="row between" style="margin:12px 4px 6px"><button class="act" onclick="expOffset++;renderExpenses()">‹</button><b>🚗 Miles · ' + esc(mi.period.label) + ' · ' + mi.total + ' mi</b>' +
+        '<button class="act" onclick="expOffset=Math.max(0,expOffset-1);renderExpenses()"' + (expOffset ? '' : ' disabled') + '>›</button></div>' +
+      (mi.techs.length ? '<div class="card" style="padding:8px"><table style="width:100%;font-size:13px;border-collapse:collapse">' + mi.techs.map(t =>
+        '<tr style="border-top:1px solid var(--line)"><td style="padding:5px"><b>' + esc(t.name) + '</b> <span class="small">' + esc(t.tech) + '</span></td><td style="text-align:right">' + t.days + ' day' + (t.days === 1 ? '' : 's') + '</td><td style="text-align:right;padding:5px"><b>' + t.miles + ' mi</b></td></tr>').join('') + '</table></div>'
+        : '<div class="empty">No miles logged</div>') +
+      '<div class="small" style="margin:6px 4px;color:var(--sub)">Pick a tech at the top, then Pay → Miles / Receipts for their details (for admins, use their login or the Mileage / Receipts tabs in the sheet).</div>';
+  } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+async function rcStatus(id, status, btn) {
+  btn.disabled = true;
+  try { await api('receiptstatus', { id, status }); toast('Marked ' + status); renderExpenses(); } catch (e) { toast(e.message, 4000); btn.disabled = false; }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
