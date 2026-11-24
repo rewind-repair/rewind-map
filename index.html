@@ -154,6 +154,7 @@
   #toast { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 200;
            background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: 90vw; opacity: 0; transition: opacity .2s; pointer-events: none; }
   #toast.show { opacity: 1; }
+  body.trainee #nav-admin, body.trainee .sheet-foot { display: none !important; }
   #flash { position: fixed; inset: 0; z-index: 210; display: flex; align-items: center; justify-content: center; pointer-events: none; }
   #flash .box { background: rgba(20,20,30,.94); color: #fff; border-radius: 18px; padding: 22px 28px; text-align: center; min-width: 180px;
                 box-shadow: 0 8px 30px rgba(0,0,0,.4); animation: flashIn .18s ease-out; transition: opacity .35s, transform .35s; }
@@ -217,7 +218,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.49';
+const APP_VERSION = '3.53';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -312,7 +313,7 @@ function fillTechs() {
 function start() {
   $('#login').classList.add('hidden');
   const u = session.user;
-  $('#who').textContent = u.name + (u.admin ? ' · admin' : '');
+  $('#who').textContent = u.name + (u.admin ? ' · admin' : u.trainee ? ' · shadowing' : '');
   const sel = $('#tech-pick');
   if (u.admin) {
     techFilter = store.get('rw_tech', 'ALL');
@@ -325,6 +326,7 @@ function start() {
     }).catch(() => {});
   } else sel.classList.add('hidden');
   $('#nav-pay').classList.toggle('hidden', !!u.admin && (!u.tech || u.tech === 'ADMIN'));   // a tech who's also admin keeps My pay
+  document.body.classList.toggle('trainee', !!u.trainee);
   $('#nav-admin').classList.toggle('hidden', !u.admin);
   flushQueue();
   const cached = store.get('rw_jobs_' + u.name + '_' + techFilter, null);
@@ -397,6 +399,7 @@ function jobCard(j) {
     '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') +
+      (j.shadow ? ' <span class="chip blue">👥 ' + esc(j.shadow.name || 'Trainee') + '</span>' : '') +
       (j.custWaiting ? ' <span class="chip amber">✉ Customer replied</span>' : '') + (j.hemAsk ? ' <span class="chip amber">❓ HEM asked</span>' : '') + '</div>' +
     (j.parts || []).map(p => '<div class="small" style="margin-top:4px">📦 …<span class="last4">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + (p.part ? ' · ' + esc(p.part) : '') + '</div>').join('') +
     (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
@@ -755,6 +758,12 @@ function partStatusLine(i) {
 }
 function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
+  if (session.user.trainee) return '<div class="card" style="border:2px solid var(--blue)"><b style="color:var(--blue)">👥 Shadowing ' + esc((j.shadow && j.shadow.trainer) || techName(j.tech) || j.tech) + '</b>' +
+      '<div class="small" style="margin-top:2px">Training ticket — your trainer checks in, updates and closes it.</div></div>' +
+    '<div class="card"><div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
+      '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' + (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
+      '<div style="margin-top:6px">' + apptChip(j) + '</div></div>' + partsBox(j, (store.get('rw_det_' + j.cni, null) || {}).partInfo) +
+    '<div class="actions"><a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a></div>';
   return (j.rpos ? '<div class="card" style="border:2px solid var(--red);background:rgba(224,106,106,.1)"><b style="color:var(--red)">🚨 URGENT — RPOS (retail point of sale)</b>' +
       '<div class="small" style="margin-top:2px">Point of sale: no need to contact the site or schedule. Just go, as soon as you can within the SLA.</div></div>' : '') +
     '<div class="card">' +
@@ -777,10 +786,57 @@ function jobTop(j) {
 }
 // Pinned to the bottom of the ticket screen, always one tap away
 function jobFoot(j) {
-  return '<div class="sheet-foot" style="grid-template-columns:' + (session.user.admin ? '2fr 1fr' : '1fr') + '">' +
+  if (session.user.trainee) return '';
+  return '<div class="sheet-foot" style="grid-template-columns:' + (session.user.admin ? '2fr 52px 1fr' : '1fr 52px') + '">' +
     '<button class="act primary" style="padding:13px;font-size:15px" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button>' +
+    '<button class="act" title="Call HP / Lenovo support or report an issue" style="font-size:20px;font-weight:800;color:var(--red);padding:0" onclick="issueMenu(\'' + j.cni + '\')">!</button>' +
     (session.user.admin ? '<button class="act" onclick="adminMenu(\'' + j.cni + '\')">⚙ Admin</button>' : '') +
   '</div>';
+}
+// ── "!" button: OEM support line (picked from brand, device and warranty) + other issues ──
+const OEM_LINES = [
+  { key: 'hpPc',       line: 'HP · Computer',                 phone: '800-477-6222', dial: '18004776222,,1,,1,,1', menu: 'Option 1 → 1 → 1' },
+  { key: 'hpPrinter',  line: 'HP · Printer',                  phone: '800-477-6222', dial: '18004776222,,1,,1,,2', menu: 'Option 1 → 1 → 2' },
+  { key: 'lnvStd',     line: 'Lenovo · Standard',             phone: '855-253-6686', dial: '18552536686', menu: '' },
+  { key: 'lnvPremier', line: 'Lenovo · Premier',              phone: '855-669-3600', dial: '18556693600', menu: '' },
+  { key: 'lnvLegion',  line: 'Lenovo · Legion / Premium Care', phone: '888-278-9707', dial: '18882789707', menu: '' },
+];
+function oemCallBtn(cni, o, primary) {
+  return '<a class="act' + (primary ? ' primary' : '') + '" style="display:block;text-align:left;' + (primary ? 'padding:13px;font-size:15px' : '') + '" href="tel:' + o.dial + '"' +
+    ' onclick="logOemCall(\'' + cni + '\',\'' + esc(o.line) + '\')">📞 ' + esc(o.line) + ' · ' + esc(o.phone) +
+    (o.menu ? '<span class="sub"' + (primary ? ' style="color:inherit;opacity:.75"' : '') + '>' + esc(o.menu) + (primary ? ' — dialed for you' : '') + '</span>' : '') + '</a>';
+}
+function logOemCall(cni, line) { api('issue', { cni, call: line }).catch(() => {}); }
+function issueMenu(cni) {
+  closeMenu();
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  const s = j.support || null;
+  const pick = s && OEM_LINES.find(o => o.key === s.key);
+  const others = OEM_LINES.filter(o => !pick || o.key !== pick.key);
+  const bg = document.createElement('div');
+  bg.id = 'menu-bg';
+  bg.onclick = e => { if (e.target === bg) closeMenu(); };
+  bg.innerHTML = '<div id="menu"><div class="mt">Support · CNI ' + esc(cni) + (j.wo ? ' · ' + esc(j.wo) : '') + '</div>' +
+    (pick
+      ? '<div class="small" style="margin:0 2px 8px">Detected: <b>' + esc(pick.line) + '</b>' + (s.basis ? ' — ' + esc(s.basis) : '') + (j.device ? '<br>' + esc(j.device) : '') + '</div>' + oemCallBtn(cni, pick, true)
+      : '<div class="small" style="margin:0 2px 8px">Couldn\'t tell the brand or warranty — pick the line below.</div>') +
+    '<details style="margin-top:8px"' + (pick ? '' : ' open') + '><summary class="small" style="cursor:pointer;margin:0 2px">' + (pick ? 'Wrong line? Other numbers' : 'All support lines') + '</summary>' +
+      '<div style="display:grid;gap:6px;margin-top:6px">' + others.map(o => oemCallBtn(cni, o, false)).join('') + '</div></details>' +
+    '<div class="mt" style="margin-top:14px">Other issue</div>' +
+    '<textarea class="in" id="issue-text" style="min-height:80px;width:100%;box-sizing:border-box" placeholder="What\'s wrong? e.g. site closed, wrong part shipped, customer refuses, safety issue"></textarea>' +
+    '<button class="act primary" id="issue-send" style="width:100%;margin-top:8px">Send to dispatch</button>' +
+    '<button class="act" style="width:100%;margin-top:8px" onclick="closeMenu()">Cancel</button></div>';
+  document.body.appendChild(bg);
+  $('#issue-send').onclick = async () => {
+    const text = ($('#issue-text').value || '').trim();
+    if (!text) { toast('Describe the issue first', 2500); return; }
+    const b = $('#issue-send'); b.disabled = true;
+    try {
+      const r = await send('issue', { cni, text }, 'Issue on ' + cni);
+      closeMenu();
+      if (!r.queued) flash('Sent to dispatch', 'CNI ' + cni, '❗');
+    } catch (e) { toast(e.message, 4000); b.disabled = false; }
+  };
 }
 function attemptsLabel(n) {
   return n ? '<span style="color:var(--' + (n >= 3 ? 'red' : 'amber') + ')">' + n + ' attempt' + (n === 1 ? '' : 's') + (n >= 3 ? ' · flagged' : '') + '</span>' : 'log attempt';
@@ -852,6 +908,7 @@ function adminMenu(cni) {
     { label: '💬 Message tech', fn: () => messageTech(cni, 'message') },
     { label: '🔄 Request update', fn: () => messageTech(cni, 'update') },
     { label: '↪ Reassign', fn: () => openReassign(cni) },
+    j.shadow ? { label: '👥 Remove trainee', sub: esc(j.shadow.name || 'Trainee'), fn: () => setShadow(cni, false) } : { label: '👥 Add trainee', sub: 'shadow ' + esc(j.tech || ''), fn: () => setShadow(cni, true) },
     { label: '⧉ Fieldcode', href: 'https://hemmersbach.fieldcode.com/filter?cni=' + encodeURIComponent(cni) },
   ]);
 }
@@ -1239,7 +1296,7 @@ const DARK = [
 // ── Offline queue ─────────────────────────────────────────────────────────
 // Contact attempts, Teams updates, visit times, notes and closures made with no signal are kept
 // on the phone (IndexedDB) and sent, in order, as soon as it's back online.
-const QUEUE_OPS = ['contact', 'update', 'visit', 'note', 'close'];
+const QUEUE_OPS = ['contact', 'update', 'visit', 'note', 'close', 'issue'];
 const idb = {
   db: null,
   open() {
@@ -1587,8 +1644,9 @@ let meTab = store.get('rw_me_tab', 'pay');
 async function renderPay() {
   if (view === 'pay') {
     const v = $('#view-pay');
-    v.innerHTML = '<div class="seg" style="margin:8px 4px 6px">' + [['pay', '$ Pay'], ['miles', '🚗 Miles'], ['receipts', '🧾 Receipts']].map(([k, l]) =>
+    v.innerHTML = '<div class="seg" style="margin:8px 4px 6px">' + [['pay', '$ Pay'], ['miles', '🚗 Miles'], ['receipts', '🧾 Receipts']].filter(([k]) => !(session.user.trainee && k === 'miles')).map(([k, l]) =>
       '<button class="' + (meTab === k ? 'on' : '') + '" onclick="meTab=\'' + k + '\';store.set(\'rw_me_tab\',meTab);renderPay()">' + l + '</button>').join('') + '</div><div id="me-body"></div>';
+    if (session.user.trainee && meTab === 'miles') { meTab = 'pay'; return renderPay(); }
     if (meTab === 'miles') return renderMiles($('#me-body'));
     if (meTab === 'receipts') return renderReceipts($('#me-body'));
   }
@@ -1598,11 +1656,11 @@ async function renderPay() {
   el.innerHTML = '<div class="empty"><span class="spin"></span> Adding up your closures…</div>';
   try {
     const p = await api('pay', { offset: payOffset, tech: techFilter });
-    const kind = { computer: 'Computer', printer: 'Printer', trip: 'Trip' };
+    const kind = { computer: 'Computer', printer: 'Printer', trip: 'Trip', training: '👥 Training' };
     el.innerHTML = '<div class="row between" style="margin:8px 4px"><button class="act" onclick="payOffset++;renderPay()">‹ Earlier</button>' +
         '<b>' + esc(p.period.label) + '</b><button class="act" onclick="payOffset=Math.max(0,payOffset-1);renderPay()"' + (payOffset ? '' : ' disabled') + '>Later ›</button></div>' +
       '<div class="card"><div class="row between"><span class="co">Estimated pay' + (session.user.admin ? ' · ' + esc(p.tech) : '') + '</span><b style="font-size:22px">$' + p.total + '</b></div>' +
-        '<div class="small" style="margin-top:4px">' + p.counts.computer + ' computer · ' + p.counts.printer + ' printer · ' + p.counts.trip + ' trip</div></div>' +
+        '<div class="small" style="margin-top:4px">' + p.counts.computer + ' computer · ' + p.counts.printer + ' printer · ' + p.counts.trip + ' trip' + (p.counts.training ? ' · ' + p.counts.training + ' training' : '') + '</div></div>' +
       (p.items.length ? p.items.map(i => '<div class="card job" onclick="openJob(\'' + i.cni + '\')"><div class="row between"><span class="co">' + esc(i.company || 'CNI ' + i.cni) + '</span><b>$' + i.pay + '</b></div>' +
         '<div class="small">' + esc(nice(i.day)) + ' · CNI ' + esc(i.cni) + ' · ' + kind[i.kind] + (i.ok ? '' : ' · not fixed') + (i.dup ? ' · <span style="color:var(--amber)">another visit this period</span>' : '') + '</div></div>').join('')
         : '<div class="empty">No closures in this period yet</div>') +
@@ -1615,7 +1673,7 @@ let adminTab = store.get('rw_admin_tab', 'dash'), searchQ = '', searchT = null, 
 function adminTabsHtml() {
   const n = fcData ? fcData.tickets.filter(t => t.toDispatch).length : 0;
   const rn = rqData ? rqData.items.length : 0;
-  return '<div class="seg" id="admin-tabs" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['replies', 'Replies' + (rn ? ' · ' + rn : '')], ['fc', 'Dispatch' + (n ? ' · ' + n : '')], ['board', 'Board'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay'], ['exp', 'Expenses']].map(([k, l]) =>
+  return '<div class="seg" id="admin-tabs" style="margin:8px 4px 10px">' + [['dash', 'Dashboard'], ['replies', 'Replies' + (rn ? ' · ' + rn : '')], ['fc', 'Dispatch' + (n ? ' · ' + n : '')], ['board', 'Board'], ['metros', 'Metros'], ['inbox', 'Inbox'], ['watch', 'Parts watch'], ['hem', 'HEM'], ['search', 'Search'], ['score', 'Scorecards'], ['pay', 'Pay'], ['exp', 'Expenses']].map(([k, l]) =>
     '<button class="' + (adminTab === k ? 'on' : '') + '" onclick="adminTab=\'' + k + '\';store.set(\'rw_admin_tab\',adminTab);renderAdmin()">' + l + '</button>').join('') + '</div>';
 }
 function renderAdmin() {
@@ -1626,7 +1684,7 @@ function renderAdmin() {
   if (adminTab !== 'fc' && (!fcData || Date.now() - (fcData.loaded || 0) > 120e3)) api('fclist').then(d => {
     d.loaded = Date.now(); fcData = d; const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); }).catch(() => {});
   if (adminTab !== 'replies' && (!rqData || Date.now() - (rqData.loaded || 0) > 120e3)) loadRq().then(() => { const t = $('#admin-tabs'); if (t) t.outerHTML = adminTabsHtml(); }).catch(() => {});
-  const r = { replies: renderRq, dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores, exp: renderExpenses }[adminTab] || renderDash;
+  const r = { metros: renderMetros, replies: renderRq, dash: renderDash, board: renderBoard, inbox: renderInbox, fc: renderFc, watch: renderWatch, hem: renderHem, search: renderSearch, pay: renderPay, score: renderScores, exp: renderExpenses }[adminTab] || renderDash;
   r();
 }
 const jobRow = (r, extra) => '<div class="card job" onclick="openJob(\'' + r.cni + '\')"><div class="row between"><span class="co">' + esc(r.company || 'CNI ' + r.cni) + '</span><b>' + esc(r.tech) + '</b></div>' +
@@ -2320,6 +2378,67 @@ async function renderExpenses() {
 async function rcStatus(id, status, btn) {
   btn.disabled = true;
   try { await api('receiptstatus', { id, status }); toast('Marked ' + status); renderExpenses(); } catch (e) { toast(e.message, 4000); btn.disabled = false; }
+}
+
+// ── Trainees ──────────────────────────────────────────────────────────────
+async function setShadow(cni, on) {
+  let name = 'Trainee';
+  if (on) { name = await ask('👥 Add a trainee to CNI ' + esc(cni) + '<div class="small" style="font-weight:400;margin-top:4px">They\'ll see this ticket in the trainee login and shadow the tech. Training pay: trainee $40, trainer $15 instead of the ticket rate.</div>',
+      { placeholder: 'Trainee\'s name', value: store.get('rw_last_trainee', ''), required: 'Enter the trainee\'s name', ok: 'Add trainee' });
+    if (name === null) return; name = name.trim(); store.set('rw_last_trainee', name); }
+  else if (!(await sure('Remove the trainee from CNI ' + esc(cni) + '?', 'Remove'))) return;
+  try {
+    const r = await api('shadow', { cni, on, name });
+    flash(on ? 'Trainee added' : 'Trainee removed', on ? name + ' shadows ' + r.tech : '', '👥');
+    const j = jobs.find(x => x.cni === cni); if (j) j.shadow = on ? { name } : null;
+    render(); refresh();
+  } catch (e) { toast(e.message, 5000); }
+}
+
+// ── Metros: our rollout scorecard + market share (all partners, Fieldcode Analytics, daily) ─────
+let mtOpen = {};
+async function renderMetros() {
+  const box = $('#admin-body');
+  box.innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  let d;
+  try { d = await api('metros'); } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  const f = v => v == null ? '–' : v;
+  const share = (m, list) => { const all = list.find(x => x.metro === m && x.partner === 'ALL'); if (!all) return null;
+    const avail = (list.find(x => x.metro === m && x.partner === 'Available (no partner)') || {}).created30 || 0, us = (list.find(x => x.metro === m && x.partner === 'Nordkapp') || {}).created30 || 0;
+    return all.created30 - avail > 0 ? Math.round(us / (all.created30 - avail) * 100) : null; };
+  const metros = [...new Set(d.market.map(x => x.metro).concat(d.ours30.map(x => x.metro)))].filter(m => m && m !== 'Other');
+  box.innerHTML = '<div class="small" style="margin:0 4px 8px">' + (d.date ? 'Market data ' + esc(nice(d.date)) + (d.prevDate ? ' · trend vs ' + esc(nice(d.prevDate)) : '') : '<span style="color:var(--amber)">No market data yet — leave a Fieldcode tab on Analytics View → Tickets overview with the Market Share script installed.</span>') + '</div>' +
+    metros.map(m => {
+      const o7 = d.ours7.find(x => x.metro === m) || {}, o30 = d.ours30.find(x => x.metro === m) || {};
+      const us = d.market.find(x => x.metro === m && x.partner === 'Nordkapp') || {}, all = d.market.find(x => x.metro === m && x.partner === 'ALL') || {};
+      const rivals = d.market.filter(x => x.metro === m && !/^(ALL|Nordkapp|Available|Hemmersbach)/.test(x.partner)).sort((a, b) => b.created30 - a.created30);
+      const sh = share(m, d.market), shp = share(m, d.prev);
+      const faster = us.medDays30 != null && rivals[0] && rivals[0].medDays30 != null ? us.medDays30 <= rivals[0].medDays30 : null;
+      return '<div class="card"><div class="row between"><span class="co">' + esc(m) + '</span><b>' + (sh == null ? '' : sh + '% share') +
+          (sh != null && shp != null ? ' <span class="small" style="color:var(--' + (sh >= shp ? 'green' : 'red') + ')">' + (sh >= shp ? '▲' : '▼') + Math.abs(sh - shp) + '</span>' : '') + '</b></div>' +
+        '<dl class="kv" style="margin-top:6px">' +
+          '<dt>Routed / closed (7d)</dt><dd>' + f(o7.routed) + ' / ' + f(o7.closed) + ' <span class="small">· 30d ' + f(o30.routed) + ' / ' + f(o30.closed) + '</span></dd>' +
+          '<dt>Median days to visit</dt><dd><b>' + f(us.medDays30) + '</b>' + (rivals[0] ? ' <span class="small">vs ' + esc(rivals[0].partner) + ' ' + f(rivals[0].medDays30) + '</span>' : '') +
+            (faster == null ? '' : faster ? ' <span class="chip green">faster</span>' : ' <span class="chip amber">slower</span>') + '</dd>' +
+          '<dt>Visited ≤ 3 days</dt><dd>' + f(us.in3d30) + '%' + (rivals[0] ? ' <span class="small">vs ' + f(rivals[0].in3d30) + '%</span>' : '') + '</dd>' +
+          '<dt>Original LSDT met</dt><dd>' + (o30.onTime == null ? '–' : o30.onTime + '%') + ' <span class="small">(' + f(o30.onTimeN) + ' tickets, 30d)</span></dd>' +
+          '<dt>Fixed on 1st visit</dt><dd>' + (o30.fixRate == null ? '–' : o30.fixRate + '%') + '</dd>' +
+          '<dt>Open now / available</dt><dd>' + f(us.openNow) + ' ours · ' + f((d.market.find(x => x.metro === m && x.partner === 'Available (no partner)') || {}).openNow) + ' in the pool</dd></dl>' +
+        '<a href="#" class="small" onclick="event.preventDefault();mtOpen[\'' + esc(m) + '\']=!mtOpen[\'' + esc(m) + '\'];renderMetrosCached()">' + (mtOpen[m] ? '▾' : '▸') + ' All partners (30 days)</a>' +
+        (mtOpen[m] ? '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:6px"><tr style="color:var(--sub)"><td>Partner</td><td style="text-align:right">Got</td><td style="text-align:right">Closed</td><td style="text-align:right">Days</td><td style="text-align:right">≤3d</td></tr>' +
+          d.market.filter(x => x.metro === m && x.partner !== 'ALL').sort((a, b) => b.created30 - a.created30).map(x => '<tr style="border-top:1px solid var(--line)' + (x.partner === 'Nordkapp' ? ';font-weight:700' : '') + '"><td style="padding:3px 0">' + esc(x.partner) + '</td><td style="text-align:right">' + f(x.created30) +
+            '</td><td style="text-align:right">' + f(x.closed30) + '</td><td style="text-align:right">' + f(x.medDays30) + '</td><td style="text-align:right">' + (x.in3d30 == null ? '–' : x.in3d30 + '%') + '</td></tr>').join('') +
+          '<tr style="border-top:1px solid var(--line);color:var(--sub)"><td>All</td><td style="text-align:right">' + f(all.created30) + '</td><td style="text-align:right">' + f(all.closed30) + '</td><td style="text-align:right">' + f(all.medDays30) + '</td><td></td></tr></table></div>' : '') + '</div>';
+    }).join('') +
+    '<button class="act" style="width:100%;margin:6px 0" onclick="weeklyNow(this)">✉ Send the weekly update now</button>' +
+    '<div class="small" style="margin:6px 4px;color:var(--sub)">Share = our tickets ÷ tickets assigned to anyone in the metro (30 days, HP + Lenovo). Days to visit = created → the tech\'s visit report, for every partner the same way. ' +
+      'Original LSDT = the first LSDT our feed saw; Fieldcode moves the current one when an appointment is set, so that one isn\'t a fair comparison. The weekly update goes out Mondays 8 AM CT (email + Admin Team).</div>';
+  renderMetros.last = d;
+}
+function renderMetrosCached() { renderMetros(); }
+async function weeklyNow(b) {
+  if (!(await sure('Send the weekly metro update now?<div class="small" style="font-weight:400;margin-top:4px">Email to the admins and a post in Admin Team.</div>', 'Send'))) return;
+  b.disabled = true; try { await api('weeklynow'); flash('Weekly update sent', 'Email + Admin Team', '📊'); } catch (e) { toast(e.message, 5000); b.disabled = false; }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
