@@ -218,7 +218,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.54';
+const APP_VERSION = '3.55';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -660,14 +660,16 @@ function openReassign(cni) {
     '<label class="row" style="margin:6px 2px 10px;gap:10px"><input type="checkbox" id="ra-email" checked> <span>Send them the dispatch email</span></label>' +
     '<label class="row" style="margin:0 2px 16px;gap:10px"><input type="checkbox" id="ra-teams" checked> <span>Post it in their Teams chat</span></label>' +
     '<button class="act primary wide" style="width:100%" id="ra-go" onclick="doReassign(\'' + cni + '\')">↪ Reassign</button>' +
-    '<div class="small" style="margin-top:10px">Both techs get a notification. The map pin moves to the new tech\'s list on the next sweep. Fieldcode itself is not changed.</div>');
+    '<div class="small" style="margin-top:10px">Both techs get a notification. The map pins (Workorders and FedEx) move to the new tech\'s lists on the next sweep, and any customer draft still in dispatch@ Drafts gets the new tech on cc. Fieldcode itself is not changed.</div>');
 }
 async function doReassign(cni) {
   const tech = $('#ra-tech').value, b = $('#ra-go');
   b.disabled = true; b.innerHTML = '<span class="spin"></span>';
   try {
     const r = await api('reassign', { cni, tech, email: $('#ra-email').checked, teams: $('#ra-teams').checked });
-    toast('Reassigned to ' + r.name + (r.mailed ? ' · email sent' : ''), 3500);
+    flash('Reassigned to ' + r.name, [r.mailed ? 'dispatch email sent' : (r.mailNote ? 'email not sent: ' + r.mailNote : ''),
+      r.requeued ? r.requeued + ' queued pin(s) moved' : 'pins move on the next map sweep',
+      r.draftsFixed ? r.draftsFixed + ' customer draft(s) now cc ' + r.name : ''].filter(Boolean).join(' · '), '↪');
     const j = jobs.find(x => x.cni === cni); if (j) j.tech = tech;
     closeSheet(); history.back(); refresh();
   } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = '↪ Reassign'; }
