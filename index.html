@@ -218,7 +218,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.53';
+const APP_VERSION = '3.54';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -1057,7 +1057,7 @@ async function openClosure(cni) {
     if (f.kind === 'files') return '<label class="f" data-col="' + f.col + '"><span>' + esc(f.label) + '</span>' +
       '<input class="in" type="file" id="f_' + f.key + '" accept="image/*" multiple onchange="showPicks(this)"><div class="small" id="picks"></div></label>';
     const id = 'f_' + f.key, req = f.required ? ' <i>*</i>' : '';
-    let val = draft[f.key] ?? (f.kind === 'cni' ? cni + (j.wo ? ' / ' + j.wo : '') : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : fromVisit(f) || (f.kind === 'date' ? todayISO() : ''));
+    let val = draft[f.key] ?? (f.extra ? extraDefault(f, j) : f.kind === 'cni' ? cni + (j.wo ? ' / ' + j.wo : '') : f.kind === 'cne' ? (j.wo || '') : f.kind === 'agent' ? session.user.name : fromVisit(f) || (f.kind === 'date' ? todayISO() : ''));
     let input;
     if (f.kind === 'choice') {
       input = '<div class="seg" data-key="' + f.key + '">' + f.choices.map(c => '<button type="button" class="' + (val === c ? 'on' : '') + '" onclick="segPick(this)">' + esc(c) + '</button>').join('') + '</div>' +
@@ -1068,8 +1068,12 @@ async function openClosure(cni) {
       input = '<input class="in" type="' + type + '" id="' + id + '" value="' + esc(val) + '">' + (/track/i.test(f.label) ? scanBtn(id, 'Scan tracking') : '');
     }
     const isFail = f.onlyIfFailed || f.col === schema.failCol;
-    return '<label class="f" data-col="' + f.col + '"' + (isFail ? ' data-fail="1"' : '') + '><span>' + esc(f.label) + req + '</span>' + input + '</label>';
+    const head = f.extra && !field.headDone ? (field.headDone = true, '<div class="sec" style="margin-top:14px"><h3>Fieldcode report</h3>' +
+      '<div class="small" style="margin:0 4px 8px">Pre-filled from the ticket and the usual answers — change anything that\'s different. Goes on the HP / Lenovo report.</div></div>') : '';
+    return head + '<label class="f" data-col="' + f.col + '"' + (isFail ? ' data-fail="1"' : '') + (f.extra ? ' data-extra="' + f.key + '"' : '') + '><span>' +
+      esc(f.extra ? f.label.replace(/^FC:\s*/, '') : f.label) + req + '</span>' + input + '</label>';
   };
+  field.headDone = false;
   $('#cf').innerHTML = '<div class="card" style="margin-bottom:12px"><b>' + esc(j.company || '') + '</b><div class="meta">' + esc(j.address || '') + '</div></div>' +
     schema.fields.map(field).join('') +
     '<button class="act primary wide" style="width:100%" id="cf-send" onclick="submitClosure(\'' + cni + '\')">Submit closure</button>' +
@@ -1078,21 +1082,53 @@ async function openClosure(cni) {
   const syncFail = () => {
     const v = $('#f_c' + schema.successCol) ? $('#f_c' + schema.successCol).value : '';
     document.querySelectorAll('#cf [data-fail]').forEach(w => w.classList.toggle('hidden', !v || yes(v)));
+    syncExtras(j);
   };
   segPick.after = () => { syncFail(); saveDraft(cni); };
   $('#cf').addEventListener('input', () => saveDraft(cni));
   syncFail();
 }
+// ── Fieldcode report questions (FC: columns) ──
+const MB_RE = /\bMBD\b|motherboard|system ?board|planar|\bPCA\b|mainboard|\bMB\b/i;
+const SSD_RE = /\bSSD\b|\bHDD\b|hard ?drive|solid ?state|nvme|\bM\.2\b/i;
+function jobBrand(j) {
+  if (j.support && j.support.brand) return j.support.brand;
+  const p = String(j.project || '');
+  return /LNV|LENOVO/i.test(p) ? 'Lenovo' : /^HP/i.test(p) ? 'HP' : '';
+}
+function extraDefault(f, j) {
+  if (f.def) return f.def;
+  const txt = (j.parts || []).map(p => (p.part || '') + ' ' + (p.desc || '')).join(' | ');
+  if (f.defFrom === 'mb') return txt ? (MB_RE.test(txt) ? 'Yes' : 'No') : '';
+  if (f.defFrom === 'ssd') return txt ? (SSD_RE.test(txt) ? 'Yes' : 'No') : '';
+  return '';
+}
+function syncExtras(j) {
+  const brand = jobBrand(j);
+  const byLabel = {};
+  schema.fields.forEach(f => { byLabel[String(f.label).trim()] = f; });
+  const valOf = f => { const el = f && $('#f_' + f.key); return el && !el.closest('.hidden') ? el.value : ''; };
+  // Two passes so a question that depends on another hidden one hides too
+  for (let pass = 0; pass < 2; pass++) schema.fields.filter(f => f.extra).forEach(f => {
+    const w = document.querySelector('#cf [data-extra="' + f.key + '"]');
+    if (!w) return;
+    let show = !f.brand || !brand || f.brand === brand;
+    if (show && f.showIf) show = valOf(byLabel[f.showIf[0]]) === f.showIf[1];
+    if (show && f.showIfCol) show = /^yes/i.test(valOf(schema.fields.find(x => x.col === f.showIfCol[0])));
+    w.classList.toggle('hidden', !show);
+  });
+}
 // Same rules as the relay, so the form is right even before the relay is redeployed
 function fixSchema(sc) {
   sc.fields.forEach(f => {
     const l = String(f.label || '').trim();
+    if (/^FC:/.test(l)) { f.extra = true; f.kind = 'choice'; f.choices = f.choices || ['Yes', 'No']; f.required = false; return; }   // "re-imaged" isn't a photo question
     if (!l || /^column \d+$/i.test(l) || l === 'Move' || l === 'Move back') f.kind = 'skip';
     else if (/picture|photo|file|image|upload/i.test(l) && f.kind !== 'auto') f.kind = 'files';
     else if (f.col !== 1 && /^\s*(?:cne|wo|work ?order)\s*(?:#|no\.?|number)?\s*$/i.test(l)) f.kind = 'cne';
     if (f.kind === 'agent') f.kind = 'text';
     if (f.col > sc.successCol && f.col <= 13) f.onlyIfFailed = true;
-    f.required = !f.onlyIfFailed && !['auto', 'auto-email', 'skip', 'files', 'cne'].includes(f.kind);
+    f.required = !f.extra && !f.onlyIfFailed && !['auto', 'auto-email', 'skip', 'files', 'cne'].includes(f.kind);
   });
   return sc;
 }
@@ -1132,7 +1168,8 @@ async function closureFiles() {
 function saveDraft(cni) { store.set('rw_close_' + cni, closureValues()); }
 async function submitClosure(cni) {
   const v = closureValues();
-  const missing = schema.fields.filter(f => f.required && !['auto', 'auto-email'].includes(f.kind) && !String(v[f.key] || '').trim());
+  const shown = f => { const el = $('#f_' + f.key); return !el || !el.closest('.hidden'); };
+  const missing = schema.fields.filter(f => (f.required || f.extra) && shown(f) && !['auto', 'auto-email', 'skip', 'files', 'cne'].includes(f.kind) && !String(v[f.key] || '').trim());
   if (missing.length) { toast('Missing: ' + missing.map(f => f.label).join(', '), 4000); return; }
   if (!(await sure('Submit the closure for CNI ' + esc(cni) + '?', 'Submit'))) return;
   const b = $('#cf-send'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…';
