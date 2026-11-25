@@ -218,7 +218,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.55';
+const APP_VERSION = '3.58';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -400,6 +400,7 @@ function jobCard(j) {
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') +
       (j.shadow ? ' <span class="chip blue">👥 ' + esc(j.shadow.name || 'Trainee') + '</span>' : '') +
+      (j.cotrain ? ' <span class="chip blue">🎓 ' + (j.cotrain.tech === session.user.tech ? 'Training ' + esc(techName(j.tech) || j.tech) : 'Training with ' + esc(j.cotrain.name || j.cotrain.tech)) + '</span>' : '') +
       (j.custWaiting ? ' <span class="chip amber">✉ Customer replied</span>' : '') + (j.hemAsk ? ' <span class="chip amber">❓ HEM asked</span>' : '') + '</div>' +
     (j.parts || []).map(p => '<div class="small" style="margin-top:4px">📦 …<span class="last4">' + esc(p.tracking.slice(-4)) + '</span>' + egg(p.tracking) + (p.part ? ' · ' + esc(p.part) : '') + '</div>').join('') +
     (j.sched && j.sched[0] ? '<div class="small" style="margin-top:4px">✉ ' + esc(j.sched[0]) + '</div>' : '') +
@@ -773,7 +774,7 @@ function jobTop(j) {
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
       (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
       '<div style="margin-top:6px">' + apptChip(j) + (j.lsdt ? ' <span class="chip amber">SLA ' + esc(j.lsdt) + '</span>' : '') + '</div>' +
-    '</div>' + waitingBox(j) + partsBox(j, (store.get('rw_det_' + j.cni, null) || {}).partInfo) +
+    '</div>' + waitingBox(j) + partsBox(j, (store.get('rw_det_' + j.cni, null) || {}).partInfo) + hpBoardBox(j) +
     '<div class="actions">' +
       '<a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a>' +
       '<span id="dial-slot">' + dialBtn(phones[0]) + '</span>' +
@@ -845,6 +846,7 @@ function attemptsLabel(n) {
 }
 // ── Pop-up menus (keep the ticket screen short) ───────────────────────────
 function menu(title, items) {
+  items = items.filter(Boolean);
   closeMenu();
   const bg = document.createElement('div');
   bg.id = 'menu-bg';
@@ -910,7 +912,11 @@ function adminMenu(cni) {
     { label: '💬 Message tech', fn: () => messageTech(cni, 'message') },
     { label: '🔄 Request update', fn: () => messageTech(cni, 'update') },
     { label: '↪ Reassign', fn: () => openReassign(cni) },
-    j.shadow ? { label: '👥 Remove trainee', sub: esc(j.shadow.name || 'Trainee'), fn: () => setShadow(cni, false) } : { label: '👥 Add trainee', sub: 'shadow ' + esc(j.tech || ''), fn: () => setShadow(cni, true) },
+    j.shadow ? { label: '👥 Remove trainee', sub: esc(j.shadow.name || 'Trainee') + ' (old shadow login)', fn: () => setShadow(cni, false) } : null,   // 'Add trainee' replaced by Take for training
+    j.cotrain && j.cotrain.tech === session.user.tech ? { label: '🎓 Stop training', sub: 'leave it with ' + esc(techName(j.tech) || j.tech), fn: () => coTrain(cni, false) }
+      : !j.cotrain && session.user.tech && !['OWN', 'ADMIN'].includes(session.user.tech) && j.tech && j.tech !== 'OWN' && j.tech !== session.user.tech
+        ? { label: '🎓 Take for training', sub: esc(techName(j.tech) || j.tech) + ' keeps it', fn: () => coTrain(cni, true) }
+        : j.cotrain ? { label: '🎓 Training: ' + esc(j.cotrain.name || j.cotrain.tech), disabled: true } : null,
     { label: '⧉ Fieldcode', href: 'https://hemmersbach.fieldcode.com/filter?cni=' + encodeURIComponent(cni) },
   ]);
 }
@@ -1089,6 +1095,52 @@ async function openClosure(cni) {
   segPick.after = () => { syncFail(); saveDraft(cni); };
   $('#cf').addEventListener('input', () => saveDraft(cni));
   syncFail();
+}
+// ── HP motherboard swap info from PartSurfer (SKU, BID, Feature Byte) ──
+function isHpJob(j) {
+  const b = jobBrand(j);
+  return b === 'HP' || (!b && /\bHP\b|elitebook|probook|elitedesk|prodesk|zbook|engage/i.test(j.device || ''));
+}
+function hpBoardBox(j) {
+  if (!isHpJob(j)) return '';
+  const mb = (j.parts || []).some(p => MB_RE.test(p.part || p.desc || ''));
+  const cached = store.get('rw_ps_' + (j.serial || j.cni), null);
+  if (mb && !cached) setTimeout(() => loadPartSurfer(j.cni), 300);           // motherboard on the way: look it up straight away
+  return '<div class="sec"><h3>HP board info <span style="text-transform:none;letter-spacing:0">· PartSurfer' + (mb ? ' · motherboard swap' : '') + '</span></h3>' +
+    '<div id="psbox">' + (cached ? psHtml(cached) : '<button class="act" style="width:100%" onclick="loadPartSurfer(\'' + j.cni + '\')">🧾 Look up SKU / BID / Feature Byte</button>') + '</div></div>';
+}
+const fbSpaced = fb => String(fb || '').replace(/(.{4})/g, '$1 ').trim();
+function psRow(label, shown, raw) {
+  return raw ? '<div class="row between" style="gap:10px;margin:6px 0;align-items:flex-start"><div style="min-width:0"><div class="small">' + label + '</div>' +
+    '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;word-break:normal;overflow-wrap:anywhere;line-height:1.5">' + esc(shown) + '</div></div>' +
+    '<button class="act" style="flex:none;padding:6px 10px" onclick="psCopy(this)" data-v="' + esc(raw) + '">Copy</button></div>' : '';
+}
+function psHtml(r) {
+  return '<div class="card">' + (r.product ? '<div class="small" style="margin-bottom:4px">' + esc(r.product) + '</div>' : '') +
+    psRow('Serial', r.serial, r.serial) + psRow('SKU', r.sku, r.sku) + psRow('BID', r.bid, r.bid) +
+    psRow('Feature Byte', fbSpaced(r.featureByte), r.featureByte) +
+    (r.note ? '<div class="small" style="color:var(--amber)">' + esc(r.note) + '</div>' : '') +
+    '<div class="small" style="margin-top:6px">Copy gives the value without the spaces.</div></div>';
+}
+function psCopy(btn) {
+  const v = btn.getAttribute('data-v');
+  try { navigator.clipboard.writeText(v); toast('Copied', 1500); } catch (e) { toast(v, 6000); }
+}
+async function loadPartSurfer(cni, serial) {
+  const box = $('#psbox'); if (!box) return;
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  box.innerHTML = '<div class="empty"><span class="spin"></span> Asking PartSurfer…</div>';
+  try {
+    const r = await api('partsurfer', { cni, serial: serial || j.serial || '' });
+    store.set('rw_ps_' + (r.serial || cni), r);
+    if ($('#psbox')) $('#psbox').innerHTML = psHtml(r);
+  } catch (e) {
+    if (!$('#psbox')) return;
+    $('#psbox').innerHTML = '<div class="small" style="margin:0 4px 6px">' + esc(e.message) + '</div>' +
+      '<div class="row" style="gap:8px"><input class="in" id="ps-serial" placeholder="Serial number" value="' + esc(serial || j.serial || '') + '" style="flex:1">' +
+      '<button class="act" onclick="loadPartSurfer(\'' + cni + '\', $(\'#ps-serial\').value.trim())">Look up</button></div>' +
+      '<a class="small" style="display:block;margin-top:6px" target="_blank" rel="noopener" href="https://partsurfer.hp.com/?searchtext=' + encodeURIComponent(serial || j.serial || '') + '">Open PartSurfer</a>';
+  }
 }
 // ── Fieldcode report questions (FC: columns) ──
 const MB_RE = /\bMBD\b|motherboard|system ?board|planar|\bPCA\b|mainboard|\bMB\b/i;
@@ -2417,6 +2469,20 @@ async function renderExpenses() {
 async function rcStatus(id, status, btn) {
   btn.disabled = true;
   try { await api('receiptstatus', { id, status }); toast('Marked ' + status); renderExpenses(); } catch (e) { toast(e.message, 4000); btn.disabled = false; }
+}
+
+// ── Trainer takes a ticket for training (the tech keeps it) ──
+async function coTrain(cni, on) {
+  const j = jobs.find(x => x.cni === cni) || {};
+  const who = techName(j.tech) || j.tech || 'the tech';
+  if (!(await sure(on ? '🎓 Take CNI ' + esc(cni) + ' for training?<div class="small" style="font-weight:400;margin-top:4px">' + esc(who) + ' keeps the ticket; it shows in your list too and you can work it. Training pay instead of the ticket rate: ' + esc(who) + ' $40, you $15.</div>'
+                      : 'Stop training on CNI ' + esc(cni) + '? It stays with ' + esc(who) + '.', on ? 'Take for training' : 'Stop'))) return;
+  try {
+    await api('cotrain', { cni, on });
+    flash(on ? 'Taken for training' : 'Training stopped', on ? who + ' keeps the ticket · $40 / $15 training pay' : 'back to the normal ticket rate', '🎓');
+    j.cotrain = on ? { tech: session.user.tech, name: session.user.name } : null;
+    render(); refresh();
+  } catch (e) { toast(e.message, 5000); }
 }
 
 // ── Trainees ──────────────────────────────────────────────────────────────
