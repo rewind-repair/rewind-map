@@ -218,7 +218,7 @@
 const API = 'https://script.google.com/macros/s/AKfycbwBvMfaJCj-UDoE-Oa9jEcIYxy4XIT2v9hFHJ-kqkEHOs8afDBxL9KZiufacb1gVsATlQ/exec';
 const MAPS_KEY = 'AIzaSyBvtDmQkxaYjYffIyJYYH7I0waSvuKF3Eg';
 const AUTO_REFRESH_MIN = 5;
-const APP_VERSION = '3.58';
+const APP_VERSION = '3.60';
 const VAPID_PUBLIC = 'BP2C2HFEMyUFpKCzr7F5zXXF8RI12OnaS-eZohOoQmsoIXI3K9mclMpeti1Ey6-SpcI04Lp-SSR6rOHt0be9Q3E';   // phone notifications (the private half lives in the rewind-push worker)
 
 // ── Small helpers ─────────────────────────────────────────────────────────
@@ -396,7 +396,7 @@ function jobCard(j) {
     '<div class="row between"><span class="co">' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span><span>' + rposChip(j) + apptChip(j) + '</span></div>' +
     '<div class="meta">' + esc(j.address || j.city || '') + '</div>' +
     (j.device ? '<div class="meta">' + KIND[deviceKind(j)] + ' ' + esc(j.device) + (deviceBrand(j) !== 'other' && !new RegExp(deviceBrand(j), 'i').test(j.device) ? ' · ' + deviceBrand(j) : '') + '</div>' : '') +
-    '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + 'CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') +
+    '<div class="row small" style="margin-top:4px;flex-wrap:wrap">' + (j.assigned && shortDate(j.assigned) ? 'Assigned ' + shortDate(j.assigned) + ' · ' : '') + idLabel(j) + (j.wo ? ' · ' + esc(j.wo) : '') +
       (admin ? ' · <b>' + esc(j.tech) + '</b>' : '') + ' · ' + esc(j.status) + (j.fedex && !(j.parts || []).length ? ' · 📦' : '') +
       (j.attempts ? ' <span class="chip ' + (j.attempts >= 3 ? 'red' : 'amber') + '">📞 ' + j.attempts + ' attempt' + (j.attempts === 1 ? '' : 's') + '</span>' : '') +
       (j.shadow ? ' <span class="chip blue">👥 ' + esc(j.shadow.name || 'Trainee') + '</span>' : '') +
@@ -763,14 +763,14 @@ function jobTop(j) {
   const phones = j.phone ? [j.phone] : phonesIn(j.note);
   if (session.user.trainee) return '<div class="card" style="border:2px solid var(--blue)"><b style="color:var(--blue)">👥 Shadowing ' + esc((j.shadow && j.shadow.trainer) || techName(j.tech) || j.tech) + '</b>' +
       '<div class="small" style="margin-top:2px">Training ticket — your trainer checks in, updates and closes it.</div></div>' +
-    '<div class="card"><div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
+    '<div class="card"><div class="row between"><b>' + idLabel(j) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' + (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
       '<div style="margin-top:6px">' + apptChip(j) + '</div></div>' + partsBox(j, (store.get('rw_det_' + j.cni, null) || {}).partInfo) +
     '<div class="actions"><a class="act" href="' + navUrl(j) + '" target="_blank" rel="noopener">▶ Navigate</a></div>';
   return (j.rpos ? '<div class="card" style="border:2px solid var(--red);background:rgba(224,106,106,.1)"><b style="color:var(--red)">🚨 URGENT — RPOS (retail point of sale)</b>' +
       '<div class="small" style="margin-top:2px">Point of sale: no need to contact the site or schedule. Just go, as soon as you can within the SLA.</div></div>' : '') +
     '<div class="card">' +
-      '<div class="row between"><b>CNI ' + esc(j.cni) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
+      '<div class="row between"><b>' + idLabel(j) + (j.wo ? ' · ' + esc(j.wo) : '') + (j.serial ? ' · S/N ' + esc(j.serial) : '') + '</b>' + (j.status ? '<span class="chip">' + esc(j.status) + '</span>' : '') + '</div>' +
       '<div class="meta" style="margin-top:4px">' + esc(j.address || j.loc || j.city || '') + '</div>' +
       (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') +
       '<div style="margin-top:6px">' + apptChip(j) + (j.lsdt ? ' <span class="chip amber">SLA ' + esc(j.lsdt) + '</span>' : '') + '</div>' +
@@ -788,10 +788,12 @@ function jobTop(j) {
     '';
 }
 // Pinned to the bottom of the ticket screen, always one tap away
+const idLabel = j => j && j.nsa ? '<span class="chip blue" style="padding:1px 6px">🛠 NSA</span> WO ' + esc(j.cni) : 'CNI ' + esc(j && j.cni);
 function jobFoot(j) {
   if (session.user.trainee) return '';
   return '<div class="sheet-foot" style="grid-template-columns:' + (session.user.admin ? '2fr 52px 1fr' : '1fr 52px') + '">' +
-    '<button class="act primary" style="padding:13px;font-size:15px" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button>' +
+    (j.nsa ? '<button class="act primary" style="padding:13px;font-size:15px" onclick="openNsaClose(\'' + j.cni + '\')">📝 Close job</button>'
+           : '<button class="act primary" style="padding:13px;font-size:15px" onclick="openClosure(\'' + j.cni + '\')">📝 Close ticket</button>') +
     '<button class="act" title="Call HP / Lenovo support or report an issue" style="font-size:20px;font-weight:800;color:var(--red);padding:0" onclick="issueMenu(\'' + j.cni + '\')">!</button>' +
     (session.user.admin ? '<button class="act" onclick="adminMenu(\'' + j.cni + '\')">⚙ Admin</button>' : '') +
   '</div>';
@@ -949,9 +951,18 @@ function kv(obj, skip) {
   const rows = Object.entries(obj || {}).filter(([k, v]) => v !== '' && v !== null && v !== undefined && !(skip || []).includes(k));
   return rows.length ? '<dl class="kv">' + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>' : '';
 }
+function nsaHtml(n) {
+  if (!n) return '';
+  return '<div class="sec"><h3>NSA work order</h3><div class="card">' +
+    kv({ 'WO': n.wo, 'Case': n.case, 'Status': n.status, 'Date in': n.dateIn, 'Booked': n.booked, 'Scheduled': n.scheduled,
+         'Unit': [n.brand, n.model].filter(Boolean).join(' '), 'Serial': n.serial, 'Product': n.product, 'Email': n.email }) +
+    (n.narrative ? '<div class="pre small" style="margin-top:8px;max-height:260px;overflow:auto">' + esc(n.narrative) + '</div>' : '') +
+    '<a class="act" style="display:block;margin-top:8px;text-align:center" target="_blank" rel="noopener" href="' + esc(n.link) + '">Open in NSA</a>' +
+    '<div class="small" style="margin-top:6px">Close it with 📝 Close job below (notes + pictures); dispatch closes it in NSA.</div></div></div>';
+}
 function detailsHtml(d) {
   mergeVisit(d.cni, d.visit);
-  let h = notesHtml(d.cni, d.notes) + '<div class="sec"><h3>Contact attempts</h3><div id="att-list">' + attemptsHtml(d.attempts || []) + '</div></div>';
+  let h = nsaHtml(d.nsa) + notesHtml(d.cni, d.notes) + '<div class="sec"><h3>Contact attempts</h3><div id="att-list">' + attemptsHtml(d.attempts || []) + '</div></div>';
   const jj = jobs.find(x => x.cni === d.cni); if (jj && d.attempts) { jj.attempts = d.attempts.length; if ($('#att-count')) $('#att-count').innerHTML = attemptsLabel(jj.attempts); }
   h += cardHtml(d.card);
   // A phone number in the dispatch email / note when the job list had none
@@ -1098,6 +1109,7 @@ async function openClosure(cni) {
 }
 // ── HP motherboard swap info from PartSurfer (SKU, BID, Feature Byte) ──
 function isHpJob(j) {
+  if (/printer|laserjet|officejet|pagewide|designjet|deskjet|\bmfp\b/i.test(j.device || '')) return false;   // board info is for PCs
   const b = jobBrand(j);
   return b === 'HP' || (!b && /\bHP\b|elitebook|probook|elitedesk|prodesk|zbook|engage/i.test(j.device || ''));
 }
@@ -1236,6 +1248,35 @@ async function submitClosure(cni) {
     closeSheet(); history.back();
     jobs = jobs.filter(x => x.cni !== cni); render();
   } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = 'Submit closure'; }
+}
+
+// ── NSA closure: pictures + notes only ──
+function openNsaClose(cni) {
+  const j = jobs.find(x => x.cni === cni) || { cni };
+  const draft = store.get('rw_nsaclose_' + cni, '');
+  sheet('Close NSA WO ' + esc(cni),
+    '<div class="card" style="margin-bottom:12px"><b>' + esc(j.company || '') + '</b><div class="meta">' + esc(j.address || j.loc || '') + '</div>' +
+      (j.device ? '<div class="meta">' + esc(j.device) + '</div>' : '') + '</div>' +
+    '<label class="f"><span>Notes</span><textarea class="in" id="nc-notes" style="min-height:120px" placeholder="What was done, parts used, anything dispatch needs for NSA">' + esc(draft) + '</textarea></label>' +
+    '<label class="f"><span>Pictures</span><input class="in" type="file" id="nc-files" accept="image/*" multiple onchange="$(\'#nc-picks\').textContent = this.files.length ? this.files.length + \' picture\' + (this.files.length === 1 ? \'\' : \'s\') + \' selected\' : \'\'"><div class="small" id="nc-picks"></div></label>' +
+    '<button class="act primary wide" style="width:100%" id="nc-send" onclick="submitNsaClose(\'' + cni + '\')">Submit</button>' +
+    '<div class="small" style="text-align:center;margin-top:8px">Dispatch closes it in NSA.</div>');
+  $('#nc-notes').addEventListener('input', e => store.set('rw_nsaclose_' + cni, e.target.value));
+}
+async function submitNsaClose(cni) {
+  const notes = ($('#nc-notes').value || '').trim();
+  const el = $('#nc-files');
+  if (!notes && !(el && el.files.length)) { toast('Add a note or a picture', 3000); return; }
+  const b = $('#nc-send'); b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…';
+  try {
+    const files = el && el.files.length ? await Promise.all([...el.files].slice(0, 10).map(shrink)) : [];
+    if (files.length) b.innerHTML = '<span class="spin"></span> Uploading ' + files.length + ' picture' + (files.length === 1 ? '' : 's') + '…';
+    const r = await send('nsaclose', { cni, notes, files }, 'NSA closure ' + cni);
+    store.del('rw_nsaclose_' + cni);
+    if (!r.queued) toast('Closed ✓', 3000);
+    closeSheet(); history.back();
+    jobs = jobs.filter(x => x.cni !== cni); render();
+  } catch (e) { toast(e.message, 5000); b.disabled = false; b.textContent = 'Submit'; }
 }
 
 // ── Parts (FedEx) ─────────────────────────────────────────────────────────
@@ -1387,7 +1428,7 @@ const DARK = [
 // ── Offline queue ─────────────────────────────────────────────────────────
 // Contact attempts, Teams updates, visit times, notes and closures made with no signal are kept
 // on the phone (IndexedDB) and sent, in order, as soon as it's back online.
-const QUEUE_OPS = ['contact', 'update', 'visit', 'note', 'close', 'issue'];
+const QUEUE_OPS = ['contact', 'update', 'visit', 'note', 'close', 'issue', 'nsaclose'];
 const idb = {
   db: null,
   open() {
@@ -1711,7 +1752,7 @@ async function openRoute() {
     const leg = prev ? miles(prev, j) : 0; total += leg; prev = j;
     return '<div class="card job" onclick="closeSheet();openJob(\'' + j.cni + '\')"><div class="row between"><span class="co">' + (i + 1) + '. ' + esc(j.company || j.customer || 'CNI ' + j.cni) + '</span>' + apptChip(j) + '</div>' +
       '<div class="meta">' + esc(j.address || j.city || '') + '</div>' +
-      '<div class="small">' + (prev && (i || here) ? '≈ ' + leg.toFixed(1) + ' mi' + (i === 0 ? ' from you' : ' from stop ' + i) + ' · ' : '') + 'CNI ' + esc(j.cni) + '</div></div>';
+      '<div class="small">' + (prev && (i || here) ? '≈ ' + leg.toFixed(1) + ' mi' + (i === 0 ? ' from you' : ' from stop ' + i) + ' · ' : '') + idLabel(j) + '</div></div>';
   });
   const pt = j => j.lat + ',' + j.lng;
   const legs = [];                                          // Google Maps takes up to 9 stops between start and end
@@ -2411,7 +2452,7 @@ function openReceipt(o) {
     '<label class="f"><span>Photo of the receipt <i>*</i></span><input class="in" type="file" id="rc-file" accept="image/*,application/pdf" multiple></label>' +
     '<div class="row" style="gap:8px"><label class="f" style="flex:1"><span>Amount ($)</span><input class="in" type="number" inputmode="decimal" step="0.01" id="rc-amt" placeholder="0.00"></label>' +
       '<label class="f" style="flex:1"><span>Date</span><input class="in" type="date" id="rc-date" value="' + todayISO() + '"></label></div>' +
-    '<label class="f"><span>Ticket</span><select class="in" id="rc-cni"><option value="">— not for a ticket —</option>' + myJobs.map(j => '<option value="' + esc(j.cni) + '"' + (j.cni === o.cni ? ' selected' : '') + '>CNI ' + esc(j.cni) + ' · ' + esc(j.company || j.city || '') + '</option>').join('') +
+    '<label class="f"><span>Ticket</span><select class="in" id="rc-cni"><option value="">— not for a ticket —</option>' + myJobs.map(j => '<option value="' + esc(j.cni) + '"' + (j.cni === o.cni ? ' selected' : '') + '>' + idLabel(j) + ' · ' + esc(j.company || j.city || '') + '</option>').join('') +
       (o.cni && !myJobs.some(j => j.cni === o.cni) ? '<option value="' + esc(o.cni) + '" selected>CNI ' + esc(o.cni) + '</option>' : '') + '</select></label>' +
     '<div id="rc-trk-row" class="' + (type === 'fedex' ? '' : 'hidden') + '"><label class="f"><span>Return tracking number</span><input class="in" id="rc-trk" inputmode="numeric" placeholder="from the FedEx label / receipt"></label>' + scanBtn('rc-trk', 'Scan label') + '</div>' +
     '<label class="f"><span>Note (optional)</span><input class="in" id="rc-note" placeholder="e.g. hospital garage, 2 h"></label>' +
